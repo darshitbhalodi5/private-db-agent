@@ -1,0 +1,15 @@
+{
+  "name": "eigen-private-db-agent",
+  "version": "0.1.0",
+  "description": "Hackathon MVP: policy-gated database agent with verifiable receipts",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT"
+}
