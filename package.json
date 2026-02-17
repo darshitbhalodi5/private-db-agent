@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "demo:smoke": "node scripts/demo-smoke.mjs http://localhost:8080",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down -v"
   },
   "engines": {
     "node": ">=22"

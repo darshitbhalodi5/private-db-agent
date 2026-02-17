@@ -1,0 +1,61 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: private-db-agent-postgres
+    environment:
+      POSTGRES_DB: private_db_agent
+      POSTGRES_USER: private_db_user
+      POSTGRES_PASSWORD: private_db_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U private_db_user -d private_db_agent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: private-db-agent-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: 8080
+      NODE_ENV: production
+      SERVICE_NAME: private-db-agent-api
+      SERVICE_VERSION: 0.1.0
+
+      DB_DRIVER: postgres
+      DATABASE_URL: postgres://private_db_user:private_db_password@postgres:5432/private_db_agent
+      POSTGRES_SSL: "false"
+      POSTGRES_MAX_POOL_SIZE: "10"
+
+      AUTH_ENABLED: "true"
+      AUTH_NONCE_TTL_SECONDS: "300"
+      AUTH_MAX_FUTURE_SKEW_SECONDS: "60"
+
+      POLICY_ENFORCE_CAPABILITY_MODE: "true"
+
+      PROOF_RECEIPT_ENABLED: "true"
+      PROOF_HASH_ALGORITHM: sha256
+      PROOF_TRUST_MODEL: eigencompute-mainnet-alpha
+      PROOF_APP_ID: demo-app-id
+      PROOF_IMAGE_DIGEST: sha256:demo-image-digest
+      PROOF_ATTESTATION_REPORT_HASH: sha256:demo-attestation-report
+      PROOF_ONCHAIN_DEPLOYMENT_TX_HASH: 0xdeadbeef
+
+      DEMO_ENABLED: "true"
+      DEMO_TARGET_WALLET_ADDRESS: 0x8ba1f109551bd432803012645ac136ddd64dba72
+      DEMO_DEFAULT_CHAIN_ID: "1"
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+volumes:
+  pgdata:

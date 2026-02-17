@@ -21,6 +21,8 @@ Implemented:
 - Verification metadata exposure (trust model, runtime attestation fields, dialect).
 - Audit log persistence status included in API responses.
 - Demo runner UI with signed allow/deny scenarios and receipt visualization.
+- Dockerized packaging for API + Postgres with seeded dataset.
+- Demo runbook and submission checklist under `submission/`.
 - Environment config validation.
 - Nonce replay protection and timestamp freshness checks.
 - Unit tests for auth, policy, query orchestration, and DB adapters.
@@ -33,6 +35,32 @@ npm run start
 ```
 
 Server defaults to `http://localhost:8080`.
+
+## Docker package
+
+Start API + Postgres with seeded data:
+
+```bash
+npm run docker:up
+```
+
+Run smoke checks:
+
+```bash
+npm run demo:smoke
+```
+
+Stop and cleanup:
+
+```bash
+npm run docker:down
+```
+
+Or run the helper script:
+
+```bash
+bash scripts/start-docker-demo.sh
+```
 
 ## Demo UI
 
