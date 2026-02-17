@@ -3,6 +3,8 @@ const DEFAULT_NONCE_TTL_SECONDS = 300;
 const DEFAULT_MAX_FUTURE_SKEW_SECONDS = 60;
 const DEFAULT_POSTGRES_POOL_SIZE = 10;
 const DEFAULT_SQLITE_PATH = './data/private-db-agent.sqlite';
+const DEFAULT_DEMO_CHAIN_ID = 1;
+const DEFAULT_DEMO_TARGET_WALLET = '0x8ba1f109551bd432803012645ac136ddd64dba72';
 
 function parsePort(rawValue) {
   if (!rawValue) {
@@ -140,6 +142,25 @@ export function loadConfig(env = process.env) {
           ''
         )
       }
+    },
+    demo: {
+      enabled: parseBoolean(env.DEMO_ENABLED, true),
+      signerPrivateKey: parseString('DEMO_SIGNER_PRIVATE_KEY', env.DEMO_SIGNER_PRIVATE_KEY, ''),
+      altSignerPrivateKey: parseString(
+        'DEMO_ALT_SIGNER_PRIVATE_KEY',
+        env.DEMO_ALT_SIGNER_PRIVATE_KEY,
+        ''
+      ),
+      targetWalletAddress: parseString(
+        'DEMO_TARGET_WALLET_ADDRESS',
+        env.DEMO_TARGET_WALLET_ADDRESS,
+        DEFAULT_DEMO_TARGET_WALLET
+      ),
+      defaultChainId: parsePositiveInteger(
+        'DEMO_DEFAULT_CHAIN_ID',
+        env.DEMO_DEFAULT_CHAIN_ID,
+        DEFAULT_DEMO_CHAIN_ID
+      )
     },
     database: {
       driver: parseEnum('DB_DRIVER', env.DB_DRIVER, ['postgres', 'sqlite'], 'sqlite'),

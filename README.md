@@ -20,6 +20,7 @@ Implemented:
 - Proof receipt generation with hash-linked decision metadata on every response.
 - Verification metadata exposure (trust model, runtime attestation fields, dialect).
 - Audit log persistence status included in API responses.
+- Demo runner UI with signed allow/deny scenarios and receipt visualization.
 - Environment config validation.
 - Nonce replay protection and timestamp freshness checks.
 - Unit tests for auth, policy, query orchestration, and DB adapters.
@@ -32,6 +33,25 @@ npm run start
 ```
 
 Server defaults to `http://localhost:8080`.
+
+## Demo UI
+
+Open:
+
+- `GET /demo`
+
+Demo helper APIs:
+
+- `GET /v1/demo/scenarios`
+- `GET /v1/demo/payload?scenario=<scenarioId>`
+
+Demo env vars:
+
+- `DEMO_ENABLED=true`
+- `DEMO_SIGNER_PRIVATE_KEY=...` (optional)
+- `DEMO_ALT_SIGNER_PRIVATE_KEY=...` (optional)
+- `DEMO_TARGET_WALLET_ADDRESS=0x8ba1f109551bd432803012645ac136ddd64dba72`
+- `DEMO_DEFAULT_CHAIN_ID=1`
 
 ## Database mode
 
@@ -137,4 +157,4 @@ Proof/verification env vars:
 
 ## Important note
 
-DB execution, attestation receipts, and demo UI are planned in subsequent milestones.
+Attestation report verification against external trust roots and production-grade deployment hardening are planned in subsequent milestones.

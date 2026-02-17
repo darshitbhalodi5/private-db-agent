@@ -86,6 +86,9 @@ test('loadConfig returns default values including database settings', () => {
   assert.equal(config.proof.enabled, true);
   assert.equal(config.proof.hashAlgorithm, 'sha256');
   assert.equal(config.proof.trustModel, 'eigencompute-mainnet-alpha');
+  assert.equal(config.demo.enabled, true);
+  assert.equal(config.demo.targetWalletAddress, '0x8ba1f109551bd432803012645ac136ddd64dba72');
+  assert.equal(config.demo.defaultChainId, 1);
   assert.equal(config.database.driver, 'sqlite');
   assert.equal(config.database.sqlite.filePath, './data/private-db-agent.sqlite');
   assert.equal(config.database.postgres.maxPoolSize, 10);
