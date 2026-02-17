@@ -11,13 +11,13 @@ Policy-gated database agent for hackathon delivery. The service is designed for 
 
 ## Current status
 
-Foundation scaffold is implemented:
+Implemented:
 
 - API server with health endpoint.
-- Query endpoint placeholder with structured responses.
+- Query endpoint with signature/auth and capability-policy gates.
 - Environment config validation.
-- Basic tests for route behavior.
-- Execution plan and architecture docs.
+- Nonce replay protection and timestamp freshness checks.
+- Unit tests for auth service, policy service, and query orchestration.
 
 ## Run locally
 
@@ -28,6 +28,34 @@ npm run start
 
 Server defaults to `http://localhost:8080`.
 
+## Query request contract (current)
+
+`POST /v1/query` expects:
+
+```json
+{
+  "requestId": "req-1",
+  "requester": "0xYourWalletAddress",
+  "capability": "balances:read",
+  "queryTemplate": "wallet_balances",
+  "queryParams": { "chainId": 1 },
+  "auth": {
+    "nonce": "nonce-1",
+    "signedAt": "2026-02-17T10:00:00.000Z",
+    "signature": "0x..."
+  }
+}
+```
+
+Signed message format:
+
+```text
+PRIVATE_DB_AGENT_AUTH_V1
+<stable-json-envelope>
+```
+
+Capabilities and templates are mapped in `src/policy/capabilityRules.js`.
+
 ## Important note
 
-This repository currently provides the foundation layer only. DB execution, wallet signature verification, attestation receipts, and demo UI are planned in subsequent milestones.
+DB execution, attestation receipts, and demo UI are planned in subsequent milestones.
