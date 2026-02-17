@@ -7,5 +7,8 @@ export const DEFAULT_CAPABILITY_RULES = Object.freeze({
   }),
   'audit:read': Object.freeze({
     templates: Object.freeze(['access_log_recent', 'policy_denies_recent'])
+  }),
+  'audit:write': Object.freeze({
+    templates: Object.freeze(['access_log_insert'])
   })
 });

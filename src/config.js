@@ -1,6 +1,8 @@
 const DEFAULT_PORT = 8080;
 const DEFAULT_NONCE_TTL_SECONDS = 300;
 const DEFAULT_MAX_FUTURE_SKEW_SECONDS = 60;
+const DEFAULT_POSTGRES_POOL_SIZE = 10;
+const DEFAULT_SQLITE_PATH = './data/private-db-agent.sqlite';
 
 function parsePort(rawValue) {
   if (!rawValue) {
@@ -62,6 +64,29 @@ function parseJsonObject(name, rawValue) {
   }
 }
 
+function parseString(name, rawValue, defaultValue = '') {
+  if (rawValue === undefined || rawValue === null || rawValue === '') {
+    return defaultValue;
+  }
+
+  if (typeof rawValue !== 'string') {
+    throw new Error(`Invalid ${name} value: expected string.`);
+  }
+
+  return rawValue;
+}
+
+function parseEnum(name, rawValue, allowedValues, defaultValue) {
+  const value = rawValue || defaultValue;
+  if (!allowedValues.includes(value)) {
+    throw new Error(
+      `Invalid ${name} value: ${value}. Allowed values: ${allowedValues.join(', ')}`
+    );
+  }
+
+  return value;
+}
+
 export function loadConfig(env = process.env) {
   return {
     serviceName: env.SERVICE_NAME || 'private-db-agent-api',
@@ -85,7 +110,23 @@ export function loadConfig(env = process.env) {
       capabilityRules: parseJsonObject(
         'POLICY_CAPABILITY_RULES_JSON',
         env.POLICY_CAPABILITY_RULES_JSON
-      )
+      ),
+      enforceCapabilityMode: parseBoolean(env.POLICY_ENFORCE_CAPABILITY_MODE, true)
+    },
+    database: {
+      driver: parseEnum('DB_DRIVER', env.DB_DRIVER, ['postgres', 'sqlite'], 'sqlite'),
+      postgres: {
+        connectionString: parseString('DATABASE_URL', env.DATABASE_URL, ''),
+        ssl: parseBoolean(env.POSTGRES_SSL, false),
+        maxPoolSize: parsePositiveInteger(
+          'POSTGRES_MAX_POOL_SIZE',
+          env.POSTGRES_MAX_POOL_SIZE,
+          DEFAULT_POSTGRES_POOL_SIZE
+        )
+      },
+      sqlite: {
+        filePath: parseString('SQLITE_FILE_PATH', env.SQLITE_FILE_PATH, DEFAULT_SQLITE_PATH)
+      }
     }
   };
 }

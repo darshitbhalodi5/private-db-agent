@@ -15,9 +15,11 @@ Implemented:
 
 - API server with health endpoint.
 - Query endpoint with signature/auth and capability-policy gates.
+- Template-constrained query execution (`wallet_balances`, `wallet_positions`, `wallet_transactions`, audit templates).
+- DB adapter factory with `sqlite` local fallback and `postgres` runtime option.
 - Environment config validation.
 - Nonce replay protection and timestamp freshness checks.
-- Unit tests for auth service, policy service, and query orchestration.
+- Unit tests for auth, policy, query orchestration, and DB adapters.
 
 ## Run locally
 
@@ -27,6 +29,19 @@ npm run start
 ```
 
 Server defaults to `http://localhost:8080`.
+
+## Database mode
+
+Default local mode:
+
+- `DB_DRIVER=sqlite`
+- `SQLITE_FILE_PATH=./data/private-db-agent.sqlite`
+
+Postgres mode:
+
+- `DB_DRIVER=postgres`
+- `DATABASE_URL=postgres://...`
+- optional: `POSTGRES_SSL=true`, `POSTGRES_MAX_POOL_SIZE=10`
 
 ## Query request contract (current)
 
@@ -55,6 +70,7 @@ PRIVATE_DB_AGENT_AUTH_V1
 ```
 
 Capabilities and templates are mapped in `src/policy/capabilityRules.js`.
+Template definitions (SQL + params) are in `src/query/templateRegistry.js`.
 
 ## Important note
 

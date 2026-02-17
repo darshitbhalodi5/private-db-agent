@@ -1,17 +1,23 @@
 import { loadConfig } from '../config.js';
+import { createDatabaseAdapter } from '../db/databaseAdapterFactory.js';
+import { createQueryExecutionService } from '../query/queryExecutionService.js';
 import { createAuthService } from './authService.js';
 import { createPolicyService } from './policyService.js';
 
+function validationError(message) {
+  return {
+    ok: false,
+    statusCode: 400,
+    body: {
+      error: 'VALIDATION_ERROR',
+      message
+    }
+  };
+}
+
 function validatePayload(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return {
-      ok: false,
-      statusCode: 400,
-      body: {
-        error: 'VALIDATION_ERROR',
-        message: 'Request body must be a JSON object.'
-      }
-    };
+    return validationError('Request body must be a JSON object.');
   }
 
   const requiredFields = ['requestId', 'requester', 'capability', 'queryTemplate'];
@@ -20,14 +26,7 @@ function validatePayload(payload) {
   );
 
   if (missing.length > 0) {
-    return {
-      ok: false,
-      statusCode: 400,
-      body: {
-        error: 'VALIDATION_ERROR',
-        message: `Missing required fields: ${missing.join(', ')}`
-      }
-    };
+    return validationError(`Missing required fields: ${missing.join(', ')}`);
   }
 
   if (
@@ -36,20 +35,17 @@ function validatePayload(payload) {
       Array.isArray(payload.queryParams) ||
       typeof payload.queryParams !== 'object')
   ) {
-    return {
-      ok: false,
-      statusCode: 400,
-      body: {
-        error: 'VALIDATION_ERROR',
-        message: 'queryParams must be a JSON object when provided.'
-      }
-    };
+    return validationError('queryParams must be a JSON object when provided.');
   }
 
   return { ok: true };
 }
 
-export function createQueryService({ authService, policyService }) {
+export function createQueryService({
+  authService,
+  policyService,
+  queryExecutionService
+}) {
   return {
     async handle(payload) {
       const validation = validatePayload(payload);
@@ -96,15 +92,35 @@ export function createQueryService({ authService, policyService }) {
         };
       }
 
+      const execution = await queryExecutionService.execute({
+        capability: payload.capability,
+        queryTemplate: payload.queryTemplate,
+        queryParams: payload.queryParams || {}
+      });
+
+      if (!execution.ok) {
+        return {
+          statusCode: execution.statusCode,
+          body: {
+            error: 'QUERY_EXECUTION_FAILED',
+            code: execution.code,
+            message: execution.message,
+            requestId: payload.requestId,
+            capability: payload.capability,
+            queryTemplate: payload.queryTemplate,
+            details: execution.details || {}
+          }
+        };
+      }
+
       return {
-        statusCode: 501,
+        statusCode: execution.statusCode,
         body: {
-          error: 'NOT_IMPLEMENTED',
-          message: 'Query execution layer is not implemented yet.',
           requestId: payload.requestId,
           requester: authResult.requester,
           capability: payload.capability,
           queryTemplate: payload.queryTemplate,
+          execution: execution.data,
           auth: {
             signedAt: authResult.signedAt || null,
             nonce: authResult.nonce || null,
@@ -121,20 +137,66 @@ export function createQueryService({ authService, policyService }) {
 }
 
 const runtimeConfig = loadConfig();
-const defaultQueryService = createQueryService({
-  authService: createAuthService(runtimeConfig.auth),
-  policyService: createPolicyService(runtimeConfig.policy)
-});
+let runtimeQueryServicePromise = null;
+
+async function buildRuntimeQueryService() {
+  const databaseAdapter = await createDatabaseAdapter(runtimeConfig.database);
+  const queryExecutionService = createQueryExecutionService({
+    databaseAdapter,
+    enforceCapabilityMode: runtimeConfig.policy.enforceCapabilityMode
+  });
+
+  return createQueryService({
+    authService: createAuthService(runtimeConfig.auth),
+    policyService: createPolicyService(runtimeConfig.policy),
+    queryExecutionService
+  });
+}
+
+async function getRuntimeQueryService() {
+  if (!runtimeQueryServicePromise) {
+    runtimeQueryServicePromise = buildRuntimeQueryService().catch((error) => {
+      runtimeQueryServicePromise = null;
+      throw error;
+    });
+  }
+
+  return runtimeQueryServicePromise;
+}
 
 export async function handleQueryRequest(payload, overrides = null) {
-  if (overrides?.authService || overrides?.policyService) {
+  if (overrides?.queryService) {
+    return overrides.queryService.handle(payload);
+  }
+
+  if (overrides?.authService || overrides?.policyService || overrides?.queryExecutionService) {
     const queryService = createQueryService({
       authService: overrides.authService || createAuthService(runtimeConfig.auth),
-      policyService: overrides.policyService || createPolicyService(runtimeConfig.policy)
+      policyService: overrides.policyService || createPolicyService(runtimeConfig.policy),
+      queryExecutionService:
+        overrides.queryExecutionService ||
+        createQueryExecutionService({
+          databaseAdapter: {
+            dialect: 'sqlite',
+            execute: async () => ({ rowCount: 0, rows: [] })
+          },
+          enforceCapabilityMode: runtimeConfig.policy.enforceCapabilityMode
+        })
     });
 
     return queryService.handle(payload);
   }
 
-  return defaultQueryService.handle(payload);
+  try {
+    const queryService = await getRuntimeQueryService();
+    return queryService.handle(payload);
+  } catch {
+    return {
+      statusCode: 503,
+      body: {
+        error: 'SERVICE_UNAVAILABLE',
+        message: 'Query service failed to initialize database adapter.'
+      }
+    };
+  }
 }

@@ -3,7 +3,48 @@ import assert from 'node:assert/strict';
 import { loadConfig } from '../src/config.js';
 import { createQueryService } from '../src/services/queryService.js';
 
-test('loadConfig returns default values for base and auth settings', () => {
+function createStubbedQueryService({
+  authResult = {
+    ok: true,
+    requester: '0x0000000000000000000000000000000000001234',
+    signedAt: '2026-02-17T10:00:00.000Z',
+    nonce: 'nonce-1'
+  },
+  policyResult = {
+    allowed: true,
+    code: 'ALLOWED',
+    message: 'Capability policy matched.'
+  },
+  executionResult = {
+    ok: true,
+    statusCode: 200,
+    data: {
+      queryTemplate: 'wallet_balances',
+      mode: 'read',
+      rowCount: 1,
+      rows: [{ asset_symbol: 'ETH', balance: 1.23 }],
+      normalizedParams: {
+        walletAddress: '0x0000000000000000000000000000000000001234',
+        chainId: 1,
+        limit: 50
+      }
+    }
+  }
+} = {}) {
+  return createQueryService({
+    authService: {
+      authenticate: async () => authResult
+    },
+    policyService: {
+      evaluateAccess: () => policyResult
+    },
+    queryExecutionService: {
+      execute: async () => executionResult
+    }
+  });
+}
+
+test('loadConfig returns default values including database settings', () => {
   const config = loadConfig({});
 
   assert.equal(config.serviceName, 'private-db-agent-api');
@@ -13,47 +54,31 @@ test('loadConfig returns default values for base and auth settings', () => {
   assert.equal(config.auth.enabled, true);
   assert.equal(config.auth.nonceTtlSeconds, 300);
   assert.equal(config.auth.maxFutureSkewSeconds, 60);
+  assert.equal(config.policy.enforceCapabilityMode, true);
+  assert.equal(config.database.driver, 'sqlite');
+  assert.equal(config.database.sqlite.filePath, './data/private-db-agent.sqlite');
+  assert.equal(config.database.postgres.maxPoolSize, 10);
 });
 
-test('query service returns not implemented after auth and policy pass', async () => {
-  const queryService = createQueryService({
-    authService: {
-      authenticate: async () => ({
-        ok: true,
-        requester: '0x0000000000000000000000000000000000001234',
-        signedAt: '2026-02-17T10:00:00.000Z',
-        nonce: 'nonce-1'
-      })
-    },
-    policyService: {
-      evaluateAccess: () => ({
-        allowed: true,
-        code: 'ALLOWED',
-        message: 'Capability policy matched.'
-      })
-    }
-  });
+test('query service returns execution result after auth and policy pass', async () => {
+  const queryService = createStubbedQueryService();
 
   const result = await queryService.handle({
     requestId: 'req-1',
     requester: '0x0000000000000000000000000000000000001234',
     capability: 'balances:read',
     queryTemplate: 'wallet_balances',
-    queryParams: { chainId: 1 }
+    queryParams: { walletAddress: '0x0000000000000000000000000000000000001234', chainId: 1 }
   });
 
-  assert.equal(result.statusCode, 501);
-  assert.equal(result.body.error, 'NOT_IMPLEMENTED');
+  assert.equal(result.statusCode, 200);
   assert.equal(result.body.requestId, 'req-1');
-  assert.equal(result.body.auth.bypassed, false);
+  assert.equal(result.body.execution.rowCount, 1);
   assert.equal(result.body.policy.code, 'ALLOWED');
 });
 
 test('query service validates required fields', async () => {
-  const queryService = createQueryService({
-    authService: { authenticate: async () => ({ ok: true, requester: '0x1' }) },
-    policyService: { evaluateAccess: () => ({ allowed: true, code: 'ALLOWED' }) }
-  });
+  const queryService = createStubbedQueryService();
 
   const result = await queryService.handle({ requestId: 'req-2' });
 
@@ -63,10 +88,7 @@ test('query service validates required fields', async () => {
 });
 
 test('query service rejects non-object payloads', async () => {
-  const queryService = createQueryService({
-    authService: { authenticate: async () => ({ ok: true, requester: '0x1' }) },
-    policyService: { evaluateAccess: () => ({ allowed: true, code: 'ALLOWED' }) }
-  });
+  const queryService = createStubbedQueryService();
 
   const result = await queryService.handle(null);
 
@@ -76,20 +98,12 @@ test('query service rejects non-object payloads', async () => {
 });
 
 test('query service returns policy denied with allowed templates', async () => {
-  const queryService = createQueryService({
-    authService: {
-      authenticate: async () => ({
-        ok: true,
-        requester: '0x0000000000000000000000000000000000001234'
-      })
-    },
-    policyService: {
-      evaluateAccess: () => ({
-        allowed: false,
-        code: 'TEMPLATE_NOT_ALLOWED',
-        message: 'Template not allowed for capability.',
-        allowedTemplates: ['wallet_balances']
-      })
+  const queryService = createStubbedQueryService({
+    policyResult: {
+      allowed: false,
+      code: 'TEMPLATE_NOT_ALLOWED',
+      message: 'Template not allowed for capability.',
+      allowedTemplates: ['wallet_balances']
     }
   });
 
@@ -103,4 +117,27 @@ test('query service returns policy denied with allowed templates', async () => {
   assert.equal(result.statusCode, 403);
   assert.equal(result.body.error, 'POLICY_DENIED');
   assert.deepEqual(result.body.details.allowedTemplates, ['wallet_balances']);
+});
+
+test('query service returns execution failure details', async () => {
+  const queryService = createStubbedQueryService({
+    executionResult: {
+      ok: false,
+      statusCode: 400,
+      code: 'UNKNOWN_QUERY_TEMPLATE',
+      message: 'Unknown query template.',
+      details: { template: 'unknown_template' }
+    }
+  });
+
+  const result = await queryService.handle({
+    requestId: 'req-4',
+    requester: '0x0000000000000000000000000000000000001234',
+    capability: 'balances:read',
+    queryTemplate: 'unknown_template'
+  });
+
+  assert.equal(result.statusCode, 400);
+  assert.equal(result.body.error, 'QUERY_EXECUTION_FAILED');
+  assert.equal(result.body.code, 'UNKNOWN_QUERY_TEMPLATE');
 });
