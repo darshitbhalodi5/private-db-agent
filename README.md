@@ -17,6 +17,9 @@ Implemented:
 - Query endpoint with signature/auth and capability-policy gates.
 - Template-constrained query execution (`wallet_balances`, `wallet_positions`, `wallet_transactions`, audit templates).
 - DB adapter factory with `sqlite` local fallback and `postgres` runtime option.
+- Proof receipt generation with hash-linked decision metadata on every response.
+- Verification metadata exposure (trust model, runtime attestation fields, dialect).
+- Audit log persistence status included in API responses.
 - Environment config validation.
 - Nonce replay protection and timestamp freshness checks.
 - Unit tests for auth, policy, query orchestration, and DB adapters.
@@ -71,6 +74,66 @@ PRIVATE_DB_AGENT_AUTH_V1
 
 Capabilities and templates are mapped in `src/policy/capabilityRules.js`.
 Template definitions (SQL + params) are in `src/query/templateRegistry.js`.
+
+## Response receipt contract
+
+Every query response now includes:
+
+- `receipt`: hash-linked proof object (`requestHash`, `decisionHash`, `verificationHash`, `receiptId`).
+- `audit`: audit-log persistence status (`logged`, `code`, optional `message`).
+
+Example response fields:
+
+```json
+{
+  "requestId": "req-1",
+  "receipt": {
+    "version": "1.0",
+    "receiptId": "rcpt_...",
+    "hashAlgorithm": "sha256",
+    "requestHash": "...",
+    "decisionHash": "...",
+    "verificationHash": "...",
+    "verification": {
+      "service": {
+        "name": "private-db-agent-api",
+        "version": "0.1.0",
+        "environment": "development"
+      },
+      "runtime": {
+        "trustModel": "eigencompute-mainnet-alpha",
+        "databaseDialect": "sqlite",
+        "attestation": {
+          "appId": null,
+          "imageDigest": null,
+          "attestationReportHash": null,
+          "onchainDeploymentTxHash": null
+        }
+      },
+      "decision": {
+        "outcome": "allow",
+        "stage": "execution",
+        "code": "QUERY_EXECUTED"
+      }
+    }
+  },
+  "audit": {
+    "logged": true,
+    "code": "LOGGED",
+    "message": null
+  }
+}
+```
+
+Proof/verification env vars:
+
+- `PROOF_RECEIPT_ENABLED=true`
+- `PROOF_HASH_ALGORITHM=sha256`
+- `PROOF_TRUST_MODEL=eigencompute-mainnet-alpha`
+- `PROOF_APP_ID=...`
+- `PROOF_IMAGE_DIGEST=...`
+- `PROOF_ATTESTATION_REPORT_HASH=...`
+- `PROOF_ONCHAIN_DEPLOYMENT_TX_HASH=...`
 
 ## Important note
 

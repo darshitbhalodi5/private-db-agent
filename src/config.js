@@ -113,6 +113,34 @@ export function loadConfig(env = process.env) {
       ),
       enforceCapabilityMode: parseBoolean(env.POLICY_ENFORCE_CAPABILITY_MODE, true)
     },
+    proof: {
+      enabled: parseBoolean(env.PROOF_RECEIPT_ENABLED, true),
+      hashAlgorithm: parseEnum(
+        'PROOF_HASH_ALGORITHM',
+        env.PROOF_HASH_ALGORITHM,
+        ['sha256'],
+        'sha256'
+      ),
+      trustModel: parseString(
+        'PROOF_TRUST_MODEL',
+        env.PROOF_TRUST_MODEL,
+        'eigencompute-mainnet-alpha'
+      ),
+      runtime: {
+        appId: parseString('PROOF_APP_ID', env.PROOF_APP_ID, ''),
+        imageDigest: parseString('PROOF_IMAGE_DIGEST', env.PROOF_IMAGE_DIGEST, ''),
+        attestationReportHash: parseString(
+          'PROOF_ATTESTATION_REPORT_HASH',
+          env.PROOF_ATTESTATION_REPORT_HASH,
+          ''
+        ),
+        onchainDeploymentTxHash: parseString(
+          'PROOF_ONCHAIN_DEPLOYMENT_TX_HASH',
+          env.PROOF_ONCHAIN_DEPLOYMENT_TX_HASH,
+          ''
+        )
+      }
+    },
     database: {
       driver: parseEnum('DB_DRIVER', env.DB_DRIVER, ['postgres', 'sqlite'], 'sqlite'),
       postgres: {

@@ -31,6 +31,32 @@ function createStubbedQueryService({
     }
   }
 } = {}) {
+  const receiptService = {
+    buildReceipt: () => ({
+      version: '1.0',
+      receiptId: 'rcpt_test_receipt_1',
+      createdAt: '2026-02-17T10:00:00.000Z',
+      hashAlgorithm: 'sha256',
+      requestHash: 'request-hash',
+      decisionHash: 'decision-hash',
+      verificationHash: 'verification-hash',
+      verification: {
+        service: {
+          name: 'private-db-agent-api',
+          version: '0.1.0',
+          environment: 'test'
+        }
+      }
+    })
+  };
+
+  const auditService = {
+    recordDecision: async () => ({
+      logged: true,
+      code: 'LOGGED'
+    })
+  };
+
   return createQueryService({
     authService: {
       authenticate: async () => authResult
@@ -40,7 +66,9 @@ function createStubbedQueryService({
     },
     queryExecutionService: {
       execute: async () => executionResult
-    }
+    },
+    receiptService,
+    auditService
   });
 }
 
@@ -55,6 +83,9 @@ test('loadConfig returns default values including database settings', () => {
   assert.equal(config.auth.nonceTtlSeconds, 300);
   assert.equal(config.auth.maxFutureSkewSeconds, 60);
   assert.equal(config.policy.enforceCapabilityMode, true);
+  assert.equal(config.proof.enabled, true);
+  assert.equal(config.proof.hashAlgorithm, 'sha256');
+  assert.equal(config.proof.trustModel, 'eigencompute-mainnet-alpha');
   assert.equal(config.database.driver, 'sqlite');
   assert.equal(config.database.sqlite.filePath, './data/private-db-agent.sqlite');
   assert.equal(config.database.postgres.maxPoolSize, 10);
@@ -75,6 +106,8 @@ test('query service returns execution result after auth and policy pass', async 
   assert.equal(result.body.requestId, 'req-1');
   assert.equal(result.body.execution.rowCount, 1);
   assert.equal(result.body.policy.code, 'ALLOWED');
+  assert.equal(result.body.receipt.receiptId, 'rcpt_test_receipt_1');
+  assert.equal(result.body.audit.logged, true);
 });
 
 test('query service validates required fields', async () => {
@@ -117,6 +150,7 @@ test('query service returns policy denied with allowed templates', async () => {
   assert.equal(result.statusCode, 403);
   assert.equal(result.body.error, 'POLICY_DENIED');
   assert.deepEqual(result.body.details.allowedTemplates, ['wallet_balances']);
+  assert.equal(result.body.receipt.receiptId, 'rcpt_test_receipt_1');
 });
 
 test('query service returns execution failure details', async () => {
