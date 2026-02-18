@@ -15,7 +15,7 @@ const adminWallet = '0x8ba1f109551bd432803012645ac136ddd64dba72';
 const managerWallet = '0x0000000000000000000000000000000000001234';
 const tenantId = 'tenant_demo';
 
-async function withDataOperationContext(testFn) {
+async function withDataOperationContext(testFn, { runtimeAttestationService = null } = {}) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'private-db-agent-data-ops-'));
   const dbPath = path.join(tempDir, 'data-ops.sqlite');
   const adapter = await createSqliteAdapter({ filePath: dbPath });
@@ -42,7 +42,8 @@ async function withDataOperationContext(testFn) {
   const dataOperationService = createDataOperationService({
     databaseAdapter: adapter,
     grantStore,
-    actionAuthorizationService
+    actionAuthorizationService,
+    ...(runtimeAttestationService ? { runtimeAttestationService } : {})
   });
 
   try {
@@ -239,4 +240,47 @@ test('data operation service rejects raw sql input and unmanaged tables', async 
     assert.equal(unmanagedTableResult.statusCode, 404);
     assert.equal(unmanagedTableResult.body.error, 'TABLE_NOT_MANAGED');
   });
+});
+
+test('data operation blocks write operation when runtime verification fails in enforce mode', async () => {
+  await withDataOperationContext(
+    async ({ migrationRunner, policyAdminService, dataOperationService }) => {
+      const migrationResult = await migrationRunner.applyMigrationPlan({
+        tenantId,
+        requestId: 'req_apply_inventory_runtime_block',
+        migrationPlan: inventoryPlan()
+      });
+      assert.equal(migrationResult.ok, true);
+
+      await bootstrapAndGrantManager(policyAdminService);
+
+      const insertResult = await dataOperationService.execute({
+        requestId: 'req_data_insert_blocked',
+        tenantId,
+        actorWallet: managerWallet,
+        operation: 'insert',
+        tableName: 'inventory',
+        values: {
+          item_id: 'item-2',
+          quantity: 1
+        }
+      });
+
+      assert.equal(insertResult.statusCode, 503);
+      assert.equal(insertResult.body.error, 'RUNTIME_VERIFICATION_FAILED');
+    },
+    {
+      runtimeAttestationService: {
+        checkAccess: async ({ sensitive }) => ({
+          allowed: !sensitive,
+          statusCode: sensitive ? 503 : 200,
+          code: sensitive ? 'RUNTIME_VERIFICATION_FAILED' : 'RUNTIME_VERIFIED',
+          message: sensitive ? 'runtime unavailable' : 'ok',
+          snapshot: {
+            verified: !sensitive
+          }
+        })
+      }
+    }
+  );
 });

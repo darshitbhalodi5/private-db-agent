@@ -11,7 +11,7 @@ import { createPolicyMutationAuthService } from '../src/services/policyMutationA
 const adminWallet = '0x8ba1f109551bd432803012645ac136ddd64dba72';
 const managerWallet = '0x0000000000000000000000000000000000001234';
 
-async function withPolicyAdminService(testFn) {
+async function withPolicyAdminService(testFn, { runtimeAttestationService = null } = {}) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'private-db-agent-policy-admin-'));
   const dbPath = path.join(tempDir, 'policy.sqlite');
   const adapter = await createSqliteAdapter({ filePath: dbPath });
@@ -22,6 +22,7 @@ async function withPolicyAdminService(testFn) {
   const policyAdminService = createPolicyAdminService({
     grantStore,
     mutationAuthService: createPolicyMutationAuthService({ enabled: false }),
+    ...(runtimeAttestationService ? { runtimeAttestationService } : {}),
     now: () => '2026-02-18T00:00:00.000Z'
   });
 
@@ -162,4 +163,27 @@ test('admin can grant and revoke permission with tamper check', async () => {
     assert.equal(decisionAfterRevoke.body.decision.allowed, false);
     assert.equal(decisionAfterRevoke.body.decision.code, 'FALLBACK_DENY');
   });
+});
+
+test('policy grant mutation is blocked when runtime verification fails', async () => {
+  await withPolicyAdminService(
+    async ({ policyAdminService }) => {
+      const result = await policyAdminService.createGrant(bootstrapPayload());
+      assert.equal(result.statusCode, 503);
+      assert.equal(result.body.error, 'RUNTIME_VERIFICATION_FAILED');
+    },
+    {
+      runtimeAttestationService: {
+        checkAccess: async () => ({
+          allowed: false,
+          statusCode: 503,
+          code: 'RUNTIME_VERIFICATION_FAILED',
+          message: 'runtime not verified',
+          snapshot: {
+            verified: false
+          }
+        })
+      }
+    }
+  );
 });

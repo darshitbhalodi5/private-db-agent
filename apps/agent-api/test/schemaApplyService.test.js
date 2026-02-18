@@ -151,6 +151,35 @@ test('schema apply surfaces authorization failures', async () => {
   assert.equal(result.body.error, 'POLICY_DENIED');
 });
 
+test('schema apply blocks when runtime attestation enforcement fails', async () => {
+  const schemaApplyService = createSchemaApplyService({
+    aiDraftStore: createAiDraftStoreStub(),
+    actionAuthorizationService: createAllowAuthorizationService(),
+    runtimeAttestationService: {
+      checkAccess: async () => ({
+        allowed: false,
+        statusCode: 503,
+        code: 'RUNTIME_VERIFICATION_FAILED',
+        message: 'runtime not verified',
+        snapshot: {
+          verified: false
+        }
+      })
+    },
+    migrationRunnerService: {
+      applyMigrationPlan: async () => ({
+        ok: true,
+        data: {}
+      })
+    }
+  });
+
+  const result = await schemaApplyService.apply(createValidPayload());
+
+  assert.equal(result.statusCode, 503);
+  assert.equal(result.body.error, 'RUNTIME_VERIFICATION_FAILED');
+});
+
 test('schema apply requires AI approval metadata for eigen-ai assisted payloads', async () => {
   const schemaApplyService = createSchemaApplyService({
     aiDraftStore: createAiDraftStoreStub(),
