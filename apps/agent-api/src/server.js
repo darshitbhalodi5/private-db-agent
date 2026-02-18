@@ -4,6 +4,12 @@ import { loadConfig } from './config.js';
 import { handleControlPlaneSubmit } from './routes/controlPlane.js';
 import { handleDemoPage, handleDemoPayload, handleDemoScenarios } from './routes/demo.js';
 import { handleHealth } from './routes/health.js';
+import {
+  handlePolicyGrantCreate,
+  handlePolicyGrantList,
+  handlePolicyGrantRevoke,
+  handlePolicyPreviewDecision
+} from './routes/policy.js';
 import { handleQuery } from './routes/query.js';
 import { sendJson } from './lib/http.js';
 import { createDemoScenarioService } from './services/demoScenarioService.js';
@@ -27,6 +33,26 @@ export function createServer(config = loadConfig()) {
 
     if (req.method === 'POST' && pathname === '/v1/control-plane/submit') {
       await handleControlPlaneSubmit(req, res);
+      return;
+    }
+
+    if (req.method === 'GET' && pathname === '/v1/policy/grants') {
+      await handlePolicyGrantList(req, res, requestUrl);
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/v1/policy/grants') {
+      await handlePolicyGrantCreate(req, res);
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/v1/policy/grants/revoke') {
+      await handlePolicyGrantRevoke(req, res);
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/v1/policy/preview-decision') {
+      await handlePolicyPreviewDecision(req, res);
       return;
     }
 
