@@ -11,6 +11,10 @@ import {
 } from './policyDecisionEngine.js';
 import { createPolicyGrantStore } from './policyGrantStore.js';
 import { createPolicyMutationAuthService } from './policyMutationAuthService.js';
+import {
+  createPermissiveRuntimeAttestationService,
+  createRuntimeAttestationService
+} from './runtimeAttestationService.js';
 
 const EFFECT_TYPES = Object.freeze(['allow', 'deny']);
 const TENANT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;
@@ -396,6 +400,7 @@ async function evaluateActorAuthorityForGrant({ grantStore, tenantId, actorWalle
 export function createPolicyAdminService({
   grantStore,
   mutationAuthService,
+  runtimeAttestationService = createPermissiveRuntimeAttestationService(),
   now = () => new Date().toISOString()
 }) {
   if (!grantStore) {
@@ -410,6 +415,22 @@ export function createPolicyAdminService({
     const normalizedPayload = normalizeCreateGrantPayload(payload);
     if (!normalizedPayload.ok) {
       return validationError('Invalid grant mutation payload.', normalizedPayload.issues);
+    }
+
+    const runtimeCheck = await runtimeAttestationService.checkAccess({
+      action: 'policy:grant:create',
+      sensitive: true
+    });
+    if (!runtimeCheck.allowed) {
+      return serviceError(
+        runtimeCheck.code || 'RUNTIME_VERIFICATION_FAILED',
+        runtimeCheck.message ||
+          'Sensitive operation denied because runtime verification failed.',
+        runtimeCheck.statusCode || 503,
+        {
+          runtime: runtimeCheck.snapshot || null
+        }
+      );
     }
 
     const authResult = await mutationAuthService.authenticate({
@@ -494,7 +515,8 @@ export function createPolicyAdminService({
         code: 'GRANT_CREATED',
         message: 'Grant created.',
         grant: createdGrant,
-        actorAuthority: authorityResult
+        actorAuthority: authorityResult,
+        runtime: runtimeCheck.snapshot || null
       }
     };
   }
@@ -503,6 +525,22 @@ export function createPolicyAdminService({
     const normalizedPayload = normalizeRevokePayload(payload);
     if (!normalizedPayload.ok) {
       return validationError('Invalid revoke payload.', normalizedPayload.issues);
+    }
+
+    const runtimeCheck = await runtimeAttestationService.checkAccess({
+      action: 'policy:grant:revoke',
+      sensitive: true
+    });
+    if (!runtimeCheck.allowed) {
+      return serviceError(
+        runtimeCheck.code || 'RUNTIME_VERIFICATION_FAILED',
+        runtimeCheck.message ||
+          'Sensitive operation denied because runtime verification failed.',
+        runtimeCheck.statusCode || 503,
+        {
+          runtime: runtimeCheck.snapshot || null
+        }
+      );
     }
 
     const authResult = await mutationAuthService.authenticate({
@@ -593,7 +631,8 @@ export function createPolicyAdminService({
         code: 'GRANT_REVOKED',
         message: 'Grant revoked.',
         grant: updatedGrant,
-        actorAuthority: authorityResult
+        actorAuthority: authorityResult,
+        runtime: runtimeCheck.snapshot || null
       }
     };
   }
@@ -690,7 +729,8 @@ async function buildRuntimePolicyAdminService() {
     mutationAuthService: createPolicyMutationAuthService({
       ...runtimeConfig.auth,
       enabled: true
-    })
+    }),
+    runtimeAttestationService: createRuntimeAttestationService(runtimeConfig.proof)
   });
 }
 

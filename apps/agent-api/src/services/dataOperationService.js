@@ -3,6 +3,10 @@ import { createDatabaseAdapter } from '../db/databaseAdapterFactory.js';
 import { createActionAuthorizationService } from './actionAuthorizationService.js';
 import { createPolicyGrantStore } from './policyGrantStore.js';
 import { createPolicyMutationAuthService } from './policyMutationAuthService.js';
+import {
+  createPermissiveRuntimeAttestationService,
+  createRuntimeAttestationService
+} from './runtimeAttestationService.js';
 
 const TENANT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 const IDENTIFIER_PATTERN = /^[a-z][a-z0-9_]{0,62}$/;
@@ -203,7 +207,8 @@ function buildWhereClause({ dialect, filters = [], startingIndex = 1 }) {
 export function createDataOperationService({
   databaseAdapter,
   grantStore,
-  actionAuthorizationService
+  actionAuthorizationService,
+  runtimeAttestationService = createPermissiveRuntimeAttestationService()
 }) {
   if (!databaseAdapter || typeof databaseAdapter.execute !== 'function') {
     throw new Error('databaseAdapter is required for data operation service.');
@@ -275,6 +280,23 @@ export function createDataOperationService({
         body: {
           error: 'VALIDATION_ERROR',
           message: 'requestId is required.'
+        }
+      };
+    }
+
+    const runtimeCheck = await runtimeAttestationService.checkAccess({
+      action: `data:${operation}`,
+      sensitive: operation !== 'read'
+    });
+    if (!runtimeCheck.allowed) {
+      return {
+        statusCode: runtimeCheck.statusCode || 503,
+        body: {
+          error: runtimeCheck.code || 'RUNTIME_VERIFICATION_FAILED',
+          message:
+            runtimeCheck.message ||
+            'Sensitive operation denied because runtime verification failed.',
+          runtime: runtimeCheck.snapshot || null
         }
       };
     }
@@ -391,7 +413,8 @@ export function createDataOperationService({
             actorWallet: authorizationResult.actorWallet,
             decision: authorizationResult.decision,
             signatureHash: authorizationResult.signatureHash
-          }
+          },
+          runtime: runtimeCheck.snapshot || null
         }
       };
     }
@@ -431,7 +454,8 @@ export function createDataOperationService({
             actorWallet: authorizationResult.actorWallet,
             decision: authorizationResult.decision,
             signatureHash: authorizationResult.signatureHash
-          }
+          },
+          runtime: runtimeCheck.snapshot || null
         }
       };
     }
@@ -490,7 +514,8 @@ export function createDataOperationService({
             actorWallet: authorizationResult.actorWallet,
             decision: authorizationResult.decision,
             signatureHash: authorizationResult.signatureHash
-          }
+          },
+          runtime: runtimeCheck.snapshot || null
         }
       };
     }
@@ -530,7 +555,8 @@ export function createDataOperationService({
           actorWallet: authorizationResult.actorWallet,
           decision: authorizationResult.decision,
           signatureHash: authorizationResult.signatureHash
-        }
+        },
+        runtime: runtimeCheck.snapshot || null
       }
     };
   }
@@ -551,6 +577,7 @@ async function buildRuntimeDataOperationService() {
     ...runtimeConfig.auth,
     enabled: true
   });
+  const runtimeAttestationService = createRuntimeAttestationService(runtimeConfig.proof);
 
   return createDataOperationService({
     databaseAdapter,
@@ -558,7 +585,8 @@ async function buildRuntimeDataOperationService() {
     actionAuthorizationService: createActionAuthorizationService({
       grantStore,
       mutationAuthService
-    })
+    }),
+    runtimeAttestationService
   });
 }
 

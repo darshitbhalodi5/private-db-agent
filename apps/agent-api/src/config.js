@@ -130,6 +130,33 @@ export function loadConfig(env = process.env) {
         env.PROOF_TRUST_MODEL,
         'eigencompute-mainnet-alpha'
       ),
+      runtimeVerificationMode: parseEnum(
+        'PROOF_RUNTIME_VERIFICATION_MODE',
+        env.PROOF_RUNTIME_VERIFICATION_MODE,
+        ['off', 'report-only', 'enforce'],
+        'report-only'
+      ),
+      attestationSource: parseEnum(
+        'PROOF_ATTESTATION_SOURCE',
+        env.PROOF_ATTESTATION_SOURCE,
+        ['config', 'file', 'url'],
+        'config'
+      ),
+      attestationFilePath: parseString(
+        'PROOF_ATTESTATION_FILE_PATH',
+        env.PROOF_ATTESTATION_FILE_PATH,
+        ''
+      ),
+      attestationEndpoint: parseString(
+        'PROOF_ATTESTATION_ENDPOINT',
+        env.PROOF_ATTESTATION_ENDPOINT,
+        ''
+      ),
+      attestationMaxAgeSeconds: parsePositiveInteger(
+        'PROOF_ATTESTATION_MAX_AGE_SECONDS',
+        env.PROOF_ATTESTATION_MAX_AGE_SECONDS,
+        900
+      ),
       runtime: {
         appId: parseString('PROOF_APP_ID', env.PROOF_APP_ID, ''),
         imageDigest: parseString('PROOF_IMAGE_DIGEST', env.PROOF_IMAGE_DIGEST, ''),

@@ -5,6 +5,10 @@ import { createAiDraftStore } from './aiDraftStore.js';
 import { createMigrationRunnerService } from './migrationRunnerService.js';
 import { createPolicyGrantStore } from './policyGrantStore.js';
 import { createPolicyMutationAuthService } from './policyMutationAuthService.js';
+import {
+  createPermissiveRuntimeAttestationService,
+  createRuntimeAttestationService
+} from './runtimeAttestationService.js';
 import { validateAndCompileSchemaDsl } from './schemaDslService.js';
 
 const TENANT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;
@@ -37,7 +41,8 @@ function containsRawSqlInput(payload) {
 export function createSchemaApplyService({
   migrationRunnerService,
   actionAuthorizationService,
-  aiDraftStore
+  aiDraftStore,
+  runtimeAttestationService = createPermissiveRuntimeAttestationService()
 }) {
   if (!migrationRunnerService) {
     throw new Error('migrationRunnerService is required.');
@@ -99,6 +104,24 @@ export function createSchemaApplyService({
         body: {
           error: 'VALIDATION_ERROR',
           message: 'actorWallet is required.'
+        }
+      };
+    }
+
+    const runtimeCheck = await runtimeAttestationService.checkAccess({
+      action: 'schema:apply',
+      sensitive: true
+    });
+
+    if (!runtimeCheck.allowed) {
+      return {
+        statusCode: runtimeCheck.statusCode || 503,
+        body: {
+          error: runtimeCheck.code || 'RUNTIME_VERIFICATION_FAILED',
+          message:
+            runtimeCheck.message ||
+            'Sensitive operation denied because runtime verification failed.',
+          runtime: runtimeCheck.snapshot || null
         }
       };
     }
@@ -169,6 +192,7 @@ export function createSchemaApplyService({
           decision: authorizationResult.decision,
           signatureHash: authorizationResult.signatureHash
         },
+        runtime: runtimeCheck.snapshot || null,
         aiApproval: aiApprovalGate.aiApproval,
         schema: schemaDslResult.schema,
         migrationPlan: schemaDslResult.migrationPlan,
@@ -192,6 +216,7 @@ async function buildRuntimeSchemaApplyService() {
   const aiDraftStore = createAiDraftStore({ databaseAdapter });
   await grantStore.ensureInitialized();
   await aiDraftStore.ensureInitialized();
+  const runtimeAttestationService = createRuntimeAttestationService(runtimeConfig.proof);
 
   const mutationAuthService = createPolicyMutationAuthService({
     ...runtimeConfig.auth,
@@ -204,7 +229,8 @@ async function buildRuntimeSchemaApplyService() {
       grantStore,
       mutationAuthService
     }),
-    aiDraftStore
+    aiDraftStore,
+    runtimeAttestationService
   });
 }
 

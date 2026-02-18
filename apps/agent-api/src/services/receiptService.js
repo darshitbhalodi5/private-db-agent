@@ -36,8 +36,11 @@ function buildVerificationMetadata({
   runtimeMetadata,
   databaseDialect,
   proofConfig,
-  decision
+  decision,
+  runtimeVerification
 }) {
+  const claims = runtimeVerification?.claims || {};
+
   return {
     service: {
       name: runtimeMetadata.serviceName,
@@ -47,12 +50,26 @@ function buildVerificationMetadata({
     runtime: {
       trustModel: proofConfig.trustModel,
       databaseDialect,
+      verification: {
+        mode: runtimeVerification?.verificationMode || proofConfig.runtimeVerificationMode || 'unknown',
+        status: runtimeVerification?.verificationStatus || 'unknown',
+        source: runtimeVerification?.source || proofConfig.attestationSource || 'unknown',
+        checkedAt: runtimeVerification?.checkedAt || null,
+        enforced: Boolean(runtimeVerification?.enforced),
+        verified: Boolean(runtimeVerification?.verified),
+        issues: Array.isArray(runtimeVerification?.issues) ? runtimeVerification.issues : []
+      },
       attestation: {
-        appId: compactValue(proofConfig.runtime.appId),
-        imageDigest: compactValue(proofConfig.runtime.imageDigest),
-        attestationReportHash: compactValue(proofConfig.runtime.attestationReportHash),
-        onchainDeploymentTxHash: compactValue(proofConfig.runtime.onchainDeploymentTxHash)
-      }
+        appId: compactValue(claims.appId || proofConfig.runtime.appId),
+        imageDigest: compactValue(claims.imageDigest || proofConfig.runtime.imageDigest),
+        attestationReportHash: compactValue(
+          claims.attestationReportHash || proofConfig.runtime.attestationReportHash
+        ),
+        onchainDeploymentTxHash: compactValue(
+          claims.onchainDeploymentTxHash || proofConfig.runtime.onchainDeploymentTxHash
+        ),
+        claimsHash: compactValue(runtimeVerification?.claimsHash || null)
+      },
     },
     decision: {
       outcome: decision.outcome,
@@ -74,7 +91,8 @@ export function createReceiptService(
     auth,
     policy,
     execution,
-    databaseDialect
+    databaseDialect,
+    runtimeVerification
   }) {
     if (!proofConfig.enabled) {
       return null;
@@ -124,7 +142,8 @@ export function createReceiptService(
       runtimeMetadata,
       databaseDialect,
       proofConfig,
-      decision
+      decision,
+      runtimeVerification
     });
 
     const requestHash = hashSha256Hex(stableStringify(requestEnvelope));

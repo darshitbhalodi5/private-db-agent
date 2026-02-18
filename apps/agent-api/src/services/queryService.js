@@ -5,6 +5,10 @@ import { createAuditService } from './auditService.js';
 import { createAuthService } from './authService.js';
 import { createPolicyService } from './policyService.js';
 import { createReceiptService } from './receiptService.js';
+import {
+  createPermissiveRuntimeAttestationService,
+  createRuntimeAttestationService
+} from './runtimeAttestationService.js';
 
 function validationError(message) {
   return {
@@ -65,6 +69,10 @@ function createDefaultExecutionService() {
   };
 }
 
+function createNoopRuntimeAttestationService() {
+  return createPermissiveRuntimeAttestationService();
+}
+
 function normalizeAuditResult(auditResult) {
   if (!auditResult) {
     return {
@@ -103,7 +111,8 @@ async function attachReceiptAndAudit({
   execution,
   queryExecutionService,
   receiptService,
-  auditService
+  auditService,
+  runtimeVerification
 }) {
   const receipt = receiptService.buildReceipt({
     payload,
@@ -112,7 +121,8 @@ async function attachReceiptAndAudit({
     auth,
     policy,
     execution,
-    databaseDialect: queryExecutionService?.dialect || 'unknown'
+    databaseDialect: queryExecutionService?.dialect || 'unknown',
+    runtimeVerification
   });
 
   let auditResult;
@@ -145,16 +155,58 @@ export function createQueryService({
   policyService,
   queryExecutionService,
   receiptService,
-  auditService
+  auditService,
+  runtimeAttestationService
 }) {
   const safeQueryExecutionService = queryExecutionService || createDefaultExecutionService();
   const safeReceiptService = receiptService || {
     buildReceipt: () => null
   };
   const safeAuditService = auditService || createNoopAuditService();
+  const safeRuntimeAttestationService =
+    runtimeAttestationService || createNoopRuntimeAttestationService();
 
   return {
     async handle(payload) {
+      let runtimeCheck;
+      try {
+        runtimeCheck = await safeRuntimeAttestationService.checkAccess({
+          action: 'query:execute',
+          sensitive: false
+        });
+      } catch (error) {
+        runtimeCheck = {
+          allowed: true,
+          snapshot: {
+            verificationMode: 'report-only',
+            source: 'service',
+            action: 'query:execute',
+            sensitive: false,
+            checkedAt: new Date().toISOString(),
+            verified: false,
+            verificationStatus: 'unverified',
+            claims: {
+              appId: null,
+              imageDigest: null,
+              attestationReportHash: null,
+              onchainDeploymentTxHash: null,
+              issuedAt: null,
+              expiresAt: null
+            },
+            claimsHash: null,
+            issues: [
+              {
+                code: 'RUNTIME_VERIFICATION_SERVICE_ERROR',
+                message: error?.message || 'Runtime verification service failed.'
+              }
+            ],
+            enforced: false
+          }
+        };
+      }
+
+      const runtimeVerification = runtimeCheck.snapshot || null;
+
       const validation = validatePayload(payload);
       if (!validation.ok) {
         return attachReceiptAndAudit({
@@ -172,7 +224,8 @@ export function createQueryService({
           execution: null,
           queryExecutionService: safeQueryExecutionService,
           receiptService: safeReceiptService,
-          auditService: safeAuditService
+          auditService: safeAuditService,
+          runtimeVerification
         });
       }
 
@@ -198,7 +251,8 @@ export function createQueryService({
           execution: null,
           queryExecutionService: safeQueryExecutionService,
           receiptService: safeReceiptService,
-          auditService: safeAuditService
+          auditService: safeAuditService,
+          runtimeVerification
         });
       }
 
@@ -234,7 +288,8 @@ export function createQueryService({
           execution: null,
           queryExecutionService: safeQueryExecutionService,
           receiptService: safeReceiptService,
-          auditService: safeAuditService
+          auditService: safeAuditService,
+          runtimeVerification
         });
       }
 
@@ -268,7 +323,8 @@ export function createQueryService({
           execution,
           queryExecutionService: safeQueryExecutionService,
           receiptService: safeReceiptService,
-          auditService: safeAuditService
+          auditService: safeAuditService,
+          runtimeVerification
         });
       }
 
@@ -281,6 +337,7 @@ export function createQueryService({
           capability: payload.capability,
           queryTemplate: payload.queryTemplate,
           execution: execution.data,
+          runtime: runtimeVerification,
           auth: {
             signedAt: authResult.signedAt || null,
             nonce: authResult.nonce || null,
@@ -302,7 +359,8 @@ export function createQueryService({
         execution,
         queryExecutionService: safeQueryExecutionService,
         receiptService: safeReceiptService,
-        auditService: safeAuditService
+        auditService: safeAuditService,
+        runtimeVerification
       });
     }
   };
@@ -316,6 +374,7 @@ const runtimeMetadata = {
 };
 const defaultReceiptService = createReceiptService(runtimeConfig.proof, runtimeMetadata);
 const defaultAuditService = createNoopAuditService();
+const defaultRuntimeAttestationService = createRuntimeAttestationService(runtimeConfig.proof);
 let runtimeQueryServicePromise = null;
 
 async function buildRuntimeQueryService() {
@@ -330,7 +389,8 @@ async function buildRuntimeQueryService() {
     policyService: createPolicyService(runtimeConfig.policy),
     queryExecutionService,
     receiptService: defaultReceiptService,
-    auditService: createAuditService({ databaseAdapter })
+    auditService: createAuditService({ databaseAdapter }),
+    runtimeAttestationService: defaultRuntimeAttestationService
   });
 }
 
@@ -380,7 +440,8 @@ export async function handleQueryRequest(payload, overrides = null) {
     overrides?.policyService ||
     overrides?.queryExecutionService ||
     overrides?.receiptService ||
-    overrides?.auditService
+    overrides?.auditService ||
+    overrides?.runtimeAttestationService
   ) {
     const queryService = createQueryService({
       authService: overrides.authService || createAuthService(runtimeConfig.auth),
@@ -395,7 +456,9 @@ export async function handleQueryRequest(payload, overrides = null) {
           enforceCapabilityMode: runtimeConfig.policy.enforceCapabilityMode
         }),
       receiptService: overrides.receiptService || defaultReceiptService,
-      auditService: overrides.auditService || defaultAuditService
+      auditService: overrides.auditService || defaultAuditService,
+      runtimeAttestationService:
+        overrides.runtimeAttestationService || defaultRuntimeAttestationService
     });
 
     return queryService.handle(payload);

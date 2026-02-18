@@ -17,6 +17,7 @@ import {
   handlePolicyPreviewDecision
 } from './routes/policy.js';
 import { handleQuery } from './routes/query.js';
+import { handleRuntimeAttestationStatus } from './routes/runtime.js';
 import { sendJson } from './lib/http.js';
 import { createDemoScenarioService } from './services/demoScenarioService.js';
 
@@ -34,6 +35,11 @@ export function createServer(config = loadConfig()) {
 
     if (req.method === 'POST' && pathname === '/v1/query') {
       await handleQuery(req, res);
+      return;
+    }
+
+    if (req.method === 'GET' && pathname === '/v1/runtime/attestation') {
+      await handleRuntimeAttestationStatus(req, res);
       return;
     }
 
