@@ -166,6 +166,38 @@ Decision preview evaluates precedence in deterministic order:
 8. db `all` allow
 9. fallback deny
 
+## Schema apply and data operations (Task 4)
+
+Transactional schema apply endpoint:
+
+- `POST /v1/control-plane/apply`
+
+Behavior:
+
+- Validates and compiles schema DSL to deterministic migration plan.
+- Applies migration plan inside a DB transaction.
+- Rolls back all DDL changes on partial failure.
+- Registers created tables in `managed_tables`.
+- Rejects direct SQL input (`sql`, `rawSql`).
+
+Constrained runtime data operation endpoint:
+
+- `POST /v1/data/execute`
+
+Supported operations:
+
+- `read`
+- `insert`
+- `update`
+- `delete`
+
+Execution rules:
+
+- No raw SQL accepted from clients.
+- Table name and column identifiers are validated.
+- Table must exist in `managed_tables` for tenant.
+- Policy decision is enforced before execution.
+
 ## Response receipt contract
 
 Every query response now includes:
