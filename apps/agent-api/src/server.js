@@ -1,7 +1,8 @@
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { loadConfig } from './config.js';
-import { handleControlPlaneSubmit } from './routes/controlPlane.js';
+import { handleControlPlaneApply, handleControlPlaneSubmit } from './routes/controlPlane.js';
+import { handleDataOperationExecute } from './routes/dataOperation.js';
 import { handleDemoPage, handleDemoPayload, handleDemoScenarios } from './routes/demo.js';
 import { handleHealth } from './routes/health.js';
 import {
@@ -33,6 +34,16 @@ export function createServer(config = loadConfig()) {
 
     if (req.method === 'POST' && pathname === '/v1/control-plane/submit') {
       await handleControlPlaneSubmit(req, res);
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/v1/control-plane/apply') {
+      await handleControlPlaneApply(req, res);
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/v1/data/execute') {
+      await handleDataOperationExecute(req, res);
       return;
     }
 
