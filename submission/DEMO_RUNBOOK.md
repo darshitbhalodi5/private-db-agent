@@ -28,6 +28,12 @@ curl -s http://localhost:8080/health
 node scripts/demo-smoke.mjs http://localhost:8080
 ```
 
+5. Verify runtime attestation status:
+
+```bash
+curl -s http://localhost:8080/v1/runtime/attestation
+```
+
 ## Demo Scenarios
 
 1. `allow-balance-read`
@@ -50,8 +56,14 @@ node scripts/demo-smoke.mjs http://localhost:8080
 - `decisionHash`
 - `verificationHash`
 - `verification.runtime` metadata
-3. Highlight `audit` status for each run.
-4. Show `access_log_recent` query from the API (or via scenario results) to prove persistence.
+3. Show runtime verification endpoint output:
+- `verificationMode`
+- `verificationStatus`
+- `claimsHash`
+4. Explain enforce mode:
+- `PROOF_RUNTIME_VERIFICATION_MODE=enforce` denies sensitive operations when attestation verification fails.
+5. Highlight `audit` status for each run.
+6. Show `access_log_recent` query from the API (or via scenario results) to prove persistence.
 
 ## Shutdown
 

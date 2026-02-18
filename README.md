@@ -234,6 +234,31 @@ Approval gate:
   - approval record exists,
   - approved actor matches `actorWallet`.
 
+## EigenCompute runtime verification (Task 7)
+
+Runtime attestation status endpoint:
+
+- `GET /v1/runtime/attestation`
+
+Sensitive operation gate:
+
+- Schema apply (`schema:apply`)
+- Policy grant create/revoke (`policy:grant:create`, `policy:grant:revoke`)
+- Data writes (`data:insert`, `data:update`, `data:delete`)
+
+Behavior:
+
+- Runtime claims are resolved from configured source (`config`, `file`, or `url`).
+- Claims are verified (required fields + freshness window + expiry checks).
+- If `PROOF_RUNTIME_VERIFICATION_MODE=enforce`, sensitive operations are denied when verification fails.
+- Query receipts now include runtime verification status and attestation claim hash.
+
+Deployment artifacts:
+
+- `deployment/eigencompute/agent-manifest.yaml`
+- `deployment/eigencompute/runtime-attestation.sample.json`
+- `scripts/render-eigencompute-manifest.sh` (or `npm run eigen:manifest`)
+
 ## Response receipt contract
 
 Every query response now includes:
@@ -262,11 +287,21 @@ Example response fields:
       "runtime": {
         "trustModel": "eigencompute-mainnet-alpha",
         "databaseDialect": "sqlite",
+        "verification": {
+          "mode": "report-only",
+          "status": "verified",
+          "source": "config",
+          "checkedAt": "2026-02-18T00:00:00.000Z",
+          "enforced": false,
+          "verified": true,
+          "issues": []
+        },
         "attestation": {
           "appId": null,
           "imageDigest": null,
           "attestationReportHash": null,
-          "onchainDeploymentTxHash": null
+          "onchainDeploymentTxHash": null,
+          "claimsHash": null
         }
       },
       "decision": {
@@ -289,11 +324,12 @@ Proof/verification env vars:
 - `PROOF_RECEIPT_ENABLED=true`
 - `PROOF_HASH_ALGORITHM=sha256`
 - `PROOF_TRUST_MODEL=eigencompute-mainnet-alpha`
+- `PROOF_RUNTIME_VERIFICATION_MODE=report-only` (`off`, `report-only`, `enforce`)
+- `PROOF_ATTESTATION_SOURCE=config` (`config`, `file`, `url`)
+- `PROOF_ATTESTATION_FILE_PATH=...` (required for `file` source)
+- `PROOF_ATTESTATION_ENDPOINT=...` (required for `url` source)
+- `PROOF_ATTESTATION_MAX_AGE_SECONDS=900`
 - `PROOF_APP_ID=...`
 - `PROOF_IMAGE_DIGEST=...`
 - `PROOF_ATTESTATION_REPORT_HASH=...`
 - `PROOF_ONCHAIN_DEPLOYMENT_TX_HASH=...`
-
-## Important note
-
-Attestation report verification against external trust roots and production-grade deployment hardening are planned in subsequent milestones.

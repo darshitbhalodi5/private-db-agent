@@ -8,6 +8,8 @@
 - [x] Query receipts with hash-linked metadata.
 - [x] Verification metadata exposure in API responses.
 - [x] Demo UI with allow/deny scenarios.
+- [x] Runtime attestation status endpoint (`/v1/runtime/attestation`).
+- [x] Sensitive-op deny gate when attestation verification fails in enforce mode.
 
 ## Packaging
 
@@ -17,6 +19,9 @@
 - [x] Local `.env.example` with all variables.
 - [x] Demo smoke script (`scripts/demo-smoke.mjs`).
 - [x] Demo runbook (`submission/DEMO_RUNBOOK.md`).
+- [x] EigenCompute deployment manifest (`deployment/eigencompute/agent-manifest.yaml`).
+- [x] Runtime attestation sample artifact (`deployment/eigencompute/runtime-attestation.sample.json`).
+- [x] Manifest render helper (`scripts/render-eigencompute-manifest.sh`).
 
 ## Pre-Submission Commands
 
