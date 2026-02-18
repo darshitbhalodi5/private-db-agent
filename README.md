@@ -30,11 +30,27 @@ Implemented:
 ## Run locally
 
 ```bash
-npm test
-npm run start
+npm run test
+npm run dev:api
 ```
 
-Server defaults to `http://localhost:8080`.
+API defaults to `http://localhost:8080`.
+
+For frontend:
+
+```bash
+npm run dev:web
+```
+
+Frontend defaults to `http://localhost:3000`.
+
+## Monorepo layout
+
+- `apps/agent-api`: backend API service
+- `apps/web`: Next.js frontend app
+- `packages/shared-types`: shared domain constants/types
+- `packages/policy-core`: policy engine package scaffold
+- `packages/receipts`: receipt package scaffold
 
 ## Docker package
 
@@ -120,8 +136,8 @@ PRIVATE_DB_AGENT_AUTH_V1
 <stable-json-envelope>
 ```
 
-Capabilities and templates are mapped in `src/policy/capabilityRules.js`.
-Template definitions (SQL + params) are in `src/query/templateRegistry.js`.
+Capabilities and templates are mapped in `apps/agent-api/src/policy/capabilityRules.js`.
+Template definitions (SQL + params) are in `apps/agent-api/src/query/templateRegistry.js`.
 
 ## Response receipt contract
 

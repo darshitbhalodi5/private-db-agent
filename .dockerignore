@@ -3,6 +3,8 @@ npm-debug.log
 .git
 .gitignore
 docs
+apps/web
+submission
 test
 data
 *.sqlite
