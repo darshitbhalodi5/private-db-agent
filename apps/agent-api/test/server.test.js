@@ -99,6 +99,14 @@ test('loadConfig returns default values including database settings', () => {
   assert.equal(config.ai.provider, 'mock');
   assert.equal(config.ai.model, 'eigen-ai-mock-v1');
   assert.equal(typeof config.ai.signerPrivateKey, 'string');
+  assert.equal(config.a2a.enabled, true);
+  assert.equal(config.a2a.allowUnsigned, false);
+  assert.equal(config.a2a.sharedSecret, '');
+  assert.deepEqual(config.a2a.allowedAgentIds, []);
+  assert.deepEqual(config.a2a.adminAgentIds, []);
+  assert.deepEqual(config.a2a.taskAllowlist, {});
+  assert.equal(config.a2a.nonceTtlSeconds, 300);
+  assert.equal(config.a2a.maxFutureSkewSeconds, 60);
 });
 
 test('query service returns execution result after auth and policy pass', async () => {
