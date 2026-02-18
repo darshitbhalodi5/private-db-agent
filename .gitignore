@@ -5,3 +5,4 @@ coverage/
 *.log
 docs/
 data/*.sqlite
+.next/
