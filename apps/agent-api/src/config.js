@@ -5,6 +5,8 @@ const DEFAULT_POSTGRES_POOL_SIZE = 10;
 const DEFAULT_SQLITE_PATH = './data/private-db-agent.sqlite';
 const DEFAULT_DEMO_CHAIN_ID = 1;
 const DEFAULT_DEMO_TARGET_WALLET = '0x8ba1f109551bd432803012645ac136ddd64dba72';
+const DEFAULT_AI_SIGNER_PRIVATE_KEY =
+  '0x59c6995e998f97a5a0044966f094538e5b32cbac50b1f5f5c4ea7f7f0e5f7a72';
 
 function parsePort(rawValue) {
   if (!rawValue) {
@@ -176,6 +178,17 @@ export function loadConfig(env = process.env) {
       sqlite: {
         filePath: parseString('SQLITE_FILE_PATH', env.SQLITE_FILE_PATH, DEFAULT_SQLITE_PATH)
       }
+    },
+    ai: {
+      enabled: parseBoolean(env.AI_ENABLED, true),
+      provider: parseEnum('AI_PROVIDER', env.AI_PROVIDER, ['mock'], 'mock'),
+      model: parseString('AI_MODEL', env.AI_MODEL, 'eigen-ai-mock-v1'),
+      signerPrivateKey: parseString(
+        'AI_SIGNER_PRIVATE_KEY',
+        env.AI_SIGNER_PRIVATE_KEY,
+        DEFAULT_AI_SIGNER_PRIVATE_KEY
+      ),
+      signerAddress: parseString('AI_SIGNER_ADDRESS', env.AI_SIGNER_ADDRESS, '')
     }
   };
 }

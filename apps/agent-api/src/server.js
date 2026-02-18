@@ -1,6 +1,11 @@
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { loadConfig } from './config.js';
+import {
+  handleAiApproveDraft,
+  handleAiPolicyDraft,
+  handleAiSchemaDraft
+} from './routes/ai.js';
 import { handleControlPlaneApply, handleControlPlaneSubmit } from './routes/controlPlane.js';
 import { handleDataOperationExecute } from './routes/dataOperation.js';
 import { handleDemoPage, handleDemoPayload, handleDemoScenarios } from './routes/demo.js';
@@ -34,6 +39,21 @@ export function createServer(config = loadConfig()) {
 
     if (req.method === 'POST' && pathname === '/v1/control-plane/submit') {
       await handleControlPlaneSubmit(req, res);
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/v1/ai/schema-draft') {
+      await handleAiSchemaDraft(req, res);
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/v1/ai/policy-draft') {
+      await handleAiPolicyDraft(req, res);
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/v1/ai/approve-draft') {
+      await handleAiApproveDraft(req, res);
       return;
     }
 

@@ -1,6 +1,7 @@
 import { loadConfig } from '../config.js';
 import { createDatabaseAdapter } from '../db/databaseAdapterFactory.js';
 import { createActionAuthorizationService } from './actionAuthorizationService.js';
+import { createAiDraftStore } from './aiDraftStore.js';
 import { createMigrationRunnerService } from './migrationRunnerService.js';
 import { createPolicyGrantStore } from './policyGrantStore.js';
 import { createPolicyMutationAuthService } from './policyMutationAuthService.js';
@@ -33,13 +34,21 @@ function containsRawSqlInput(payload) {
   return false;
 }
 
-export function createSchemaApplyService({ migrationRunnerService, actionAuthorizationService }) {
+export function createSchemaApplyService({
+  migrationRunnerService,
+  actionAuthorizationService,
+  aiDraftStore
+}) {
   if (!migrationRunnerService) {
     throw new Error('migrationRunnerService is required.');
   }
 
   if (!actionAuthorizationService) {
     throw new Error('actionAuthorizationService is required.');
+  }
+
+  if (!aiDraftStore) {
+    throw new Error('aiDraftStore is required.');
   }
 
   async function apply(payload) {
@@ -124,6 +133,19 @@ export function createSchemaApplyService({ migrationRunnerService, actionAuthori
       };
     }
 
+    const aiApprovalGate = await validateAiApprovalForSchemaApply(payload, {
+      aiDraftStore,
+      tenantId,
+      actorWallet: payload.actorWallet,
+      compiledPlanHash: schemaDslResult.migrationPlan.planHash
+    });
+    if (!aiApprovalGate.ok) {
+      return {
+        statusCode: aiApprovalGate.statusCode,
+        body: aiApprovalGate.body
+      };
+    }
+
     const migrationApply = await migrationRunnerService.applyMigrationPlan({
       tenantId,
       requestId: schemaDslResult.normalizedDsl.requestId,
@@ -147,6 +169,7 @@ export function createSchemaApplyService({ migrationRunnerService, actionAuthori
           decision: authorizationResult.decision,
           signatureHash: authorizationResult.signatureHash
         },
+        aiApproval: aiApprovalGate.aiApproval,
         schema: schemaDslResult.schema,
         migrationPlan: schemaDslResult.migrationPlan,
         migration: migrationApply.data
@@ -166,7 +189,9 @@ async function buildRuntimeSchemaApplyService() {
   const databaseAdapter = await createDatabaseAdapter(runtimeConfig.database);
   const migrationRunnerService = createMigrationRunnerService({ databaseAdapter });
   const grantStore = createPolicyGrantStore({ databaseAdapter });
+  const aiDraftStore = createAiDraftStore({ databaseAdapter });
   await grantStore.ensureInitialized();
+  await aiDraftStore.ensureInitialized();
 
   const mutationAuthService = createPolicyMutationAuthService({
     ...runtimeConfig.auth,
@@ -178,7 +203,8 @@ async function buildRuntimeSchemaApplyService() {
     actionAuthorizationService: createActionAuthorizationService({
       grantStore,
       mutationAuthService
-    })
+    }),
+    aiDraftStore
   });
 }
 
@@ -206,4 +232,141 @@ export async function handleSchemaApplyRequest(payload, overrides = null) {
       }
     };
   }
+}
+
+export async function validateAiApprovalForSchemaApply(
+  payload,
+  { aiDraftStore, tenantId, actorWallet, compiledPlanHash }
+) {
+  if (!aiDraftStore) {
+    throw new Error('aiDraftStore is required.');
+  }
+
+  if (!payload?.aiAssist || payload.aiAssist.source !== 'eigen-ai') {
+    return {
+      ok: true,
+      aiApproval: null
+    };
+  }
+
+  const draftId =
+    typeof payload.aiAssist.draftId === 'string' && payload.aiAssist.draftId.trim().length > 0
+      ? payload.aiAssist.draftId.trim()
+      : null;
+  const draftHash =
+    typeof payload.aiAssist.draftHash === 'string' && payload.aiAssist.draftHash.trim().length > 0
+      ? payload.aiAssist.draftHash.trim()
+      : null;
+  const approvalId =
+    typeof payload.aiAssist.approvalId === 'string' && payload.aiAssist.approvalId.trim().length > 0
+      ? payload.aiAssist.approvalId.trim()
+      : null;
+  const approvedBy =
+    typeof payload.aiAssist.approvedBy === 'string' && payload.aiAssist.approvedBy.trim().length > 0
+      ? payload.aiAssist.approvedBy.trim().toLowerCase()
+      : null;
+
+  if (!draftId || !draftHash || !approvalId || !approvedBy) {
+    return {
+      ok: false,
+      statusCode: 403,
+      body: {
+        error: 'AI_DRAFT_APPROVAL_REQUIRED',
+        message:
+          'AI-assisted execution requires draftId, draftHash, approvalId, and approvedBy.'
+      }
+    };
+  }
+
+  if (approvedBy !== actorWallet.trim().toLowerCase()) {
+    return {
+      ok: false,
+      statusCode: 403,
+      body: {
+        error: 'AI_DRAFT_APPROVAL_ACTOR_MISMATCH',
+        message: 'approvedBy must match actorWallet for AI-assisted execution.'
+      }
+    };
+  }
+
+  const draft = await aiDraftStore.getDraft({
+    tenantId,
+    draftId
+  });
+  if (!draft) {
+    return {
+      ok: false,
+      statusCode: 404,
+      body: {
+        error: 'AI_DRAFT_NOT_FOUND',
+        message: 'AI draft was not found for tenant.'
+      }
+    };
+  }
+
+  if (draft.draftHash !== draftHash) {
+    return {
+      ok: false,
+      statusCode: 409,
+      body: {
+        error: 'AI_DRAFT_HASH_MISMATCH',
+        message: 'AI draft hash does not match persisted draft.'
+      }
+    };
+  }
+
+  if (draft.draftType !== 'schema') {
+    return {
+      ok: false,
+      statusCode: 409,
+      body: {
+        error: 'AI_DRAFT_TYPE_MISMATCH',
+        message: 'AI draft is not a schema draft.'
+      }
+    };
+  }
+
+  if (draft.planHash && draft.planHash !== compiledPlanHash) {
+    return {
+      ok: false,
+      statusCode: 409,
+      body: {
+        error: 'AI_DRAFT_PLAN_HASH_MISMATCH',
+        message: 'Schema payload changed after AI draft generation; approval no longer valid.'
+      }
+    };
+  }
+
+  const approval = await aiDraftStore.getApproval({
+    tenantId,
+    draftId,
+    approvalId
+  });
+
+  if (!approval) {
+    return {
+      ok: false,
+      statusCode: 403,
+      body: {
+        error: 'AI_DRAFT_APPROVAL_REQUIRED',
+        message: 'No approval record found for AI draft execution.'
+      }
+    };
+  }
+
+  if (approval.draftHash !== draftHash || approval.approvedBy !== approvedBy) {
+    return {
+      ok: false,
+      statusCode: 409,
+      body: {
+        error: 'AI_DRAFT_APPROVAL_MISMATCH',
+        message: 'Approval metadata does not match draft or actor.'
+      }
+    };
+  }
+
+  return {
+    ok: true,
+    aiApproval: approval
+  };
 }
