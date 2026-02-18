@@ -211,6 +211,29 @@ Result:
 - Agent cannot execute privileged actions without a valid signed actor.
 - Agent cannot bypass policy with internal override-style payload fields.
 
+## Eigen AI draft flow (Task 6)
+
+AI draft endpoints:
+
+- `POST /v1/ai/schema-draft`
+- `POST /v1/ai/policy-draft`
+- `POST /v1/ai/approve-draft`
+
+Draft behavior:
+
+- AI output is parsed into strict schema/policy structures.
+- Schema draft is validated via existing schema DSL validator.
+- AI response envelope is signed and verified before draft is accepted.
+- Draft and approval records are persisted (`ai_drafts`, `ai_draft_approvals`).
+
+Approval gate:
+
+- AI-assisted schema execution (`aiAssist.source = eigen-ai`) is blocked unless:
+  - valid draft record exists,
+  - draft hash matches,
+  - approval record exists,
+  - approved actor matches `actorWallet`.
+
 ## Response receipt contract
 
 Every query response now includes:
