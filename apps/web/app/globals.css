@@ -1,45 +1,353 @@
 :root {
-  color-scheme: light;
-  font-family: "Sora", "Segoe UI", sans-serif;
-  --bg: #f6f8fb;
-  --panel: #ffffff;
-  --text: #0d1b2a;
-  --muted: #4d6075;
-  --line: #d9e2ec;
+  --bg: #f3f0ea;
+  --ink: #1a1f2b;
+  --muted: #5f6673;
+  --line: #d0c7bb;
+  --surface: #ffffff;
+  --surface-2: #fbf8f3;
+  --accent: #0b6e4f;
+  --accent-ink: #e9fff7;
+  --danger: #8f1d21;
+  --danger-ink: #ffe9e9;
+  --radius: 14px;
+  --shadow: 0 14px 30px rgba(19, 31, 22, 0.08);
 }
 
 * {
   box-sizing: border-box;
 }
 
+html,
 body {
   margin: 0;
-  background: radial-gradient(circle at top right, #e9f4ff 0%, var(--bg) 48%);
-  color: var(--text);
+  padding: 0;
 }
 
-.shell {
+body {
   min-height: 100vh;
+  color: var(--ink);
+  font-family: "Sora", "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at 15% 10%, #fff5df 0, transparent 36%),
+    radial-gradient(circle at 90% 20%, #dbeee6 0, transparent 38%),
+    var(--bg);
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+  margin: 0;
+}
+
+.page-shell {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 26px 18px 52px;
   display: grid;
-  place-items: center;
-  padding: 24px;
+  gap: 16px;
 }
 
-.panel {
-  width: min(760px, 92vw);
+.hero-card {
   border: 1px solid var(--line);
-  border-radius: 16px;
-  background: var(--panel);
+  border-radius: var(--radius);
   padding: 24px;
-  box-shadow: 0 20px 48px rgba(8, 24, 44, 0.08);
+  background: linear-gradient(112deg, #ffffff 0%, #f9f6ef 100%);
+  box-shadow: var(--shadow);
 }
 
-h1 {
-  margin-top: 0;
+.hero-card h1 {
+  font-size: clamp(1.7rem, 2.2vw, 2.3rem);
+  margin-top: 4px;
+  margin-bottom: 10px;
 }
 
-p,
-li {
+.hero-card p {
+  max-width: 840px;
   color: var(--muted);
-  line-height: 1.55;
+  line-height: 1.5;
+}
+
+.eyebrow {
+  display: inline-flex;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #33443d;
+  background: #e4f2eb;
+  border: 1px solid #bddccd;
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+
+.layout-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 18px;
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 12px;
+}
+
+.full-width {
+  grid-column: 1 / -1;
+}
+
+.card header h2 {
+  font-size: 1.1rem;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.section-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.section-row-tight {
+  margin-top: 10px;
+}
+
+.stack-sm {
+  display: grid;
+  gap: 10px;
+}
+
+.stack-md {
+  display: grid;
+  gap: 14px;
+}
+
+.inline-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.meta-grid p {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  padding: 10px;
+  display: grid;
+  gap: 3px;
+}
+
+.meta-grid span {
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.meta-grid strong {
+  font-size: 0.92rem;
+  overflow-wrap: anywhere;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.9rem;
+  color: #2b3141;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  border: 1px solid #c9c0b5;
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  padding: 10px 11px;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: #2a8e69;
+  box-shadow: 0 0 0 3px rgba(43, 150, 110, 0.18);
+}
+
+.field-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.two-col {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.btn {
+  border: 1px solid #146948;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-muted {
+  border-color: #6e7787;
+  background: #f4f6f9;
+  color: #253147;
+}
+
+.btn-danger {
+  border-color: #7a1216;
+  background: var(--danger-ink);
+  color: #6f1115;
+}
+
+.wallet-row,
+.field-row {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  background: var(--surface-2);
+  display: grid;
+  gap: 8px;
+}
+
+.wallet-row {
+  grid-template-columns: 1.4fr 1fr auto;
+  align-items: end;
+}
+
+.field-row {
+  grid-template-columns: 1.2fr 0.8fr auto auto auto;
+  align-items: end;
+}
+
+.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: center;
+}
+
+.checkbox-label input {
+  width: auto;
+  margin: 0;
+}
+
+.table-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fffefb;
+  padding: 14px;
+  display: grid;
+  gap: 11px;
+}
+
+.table-card h3 {
+  font-size: 1rem;
+}
+
+.issues-box,
+.result-box {
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.issues-box {
+  border: 1px solid #efb7bc;
+  background: #fff3f4;
+}
+
+.issues-box ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 5px;
+}
+
+.ok-text {
+  border: 1px solid #b7ddce;
+  background: #ecfbf4;
+  color: #1d5d42;
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.result-box {
+  border: 1px solid #b9d7ea;
+  background: #f4faff;
+}
+
+.error-text {
+  border: 1px solid #f2b6bd;
+  background: #fff0f2;
+  color: #8f1d21;
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+pre {
+  margin: 0;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.json-preview {
+  max-height: 460px;
+  overflow: auto;
+  border: 1px solid #d4ccbf;
+  border-radius: 12px;
+  background: #f8f6f1;
+  padding: 12px;
+}
+
+@media (max-width: 1060px) {
+  .layout-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .full-width {
+    grid-column: auto;
+  }
+
+  .wallet-row,
+  .field-row,
+  .two-col,
+  .meta-grid {
+    grid-template-columns: 1fr;
+  }
 }
