@@ -23,6 +23,41 @@ export function createPostgresAdapter(config) {
         rows: result.rows || []
       };
     },
+    async runInTransaction(workFn) {
+      if (typeof workFn !== 'function') {
+        throw new Error('runInTransaction requires a callback function.');
+      }
+
+      const client = await pool.connect();
+      await client.query('BEGIN');
+
+      const transactionalExecutor = {
+        dialect: 'postgres',
+        execute: async ({ sql, values }) => {
+          const result = await client.query(sql, values);
+          return {
+            rowCount: Number.isFinite(result.rowCount) ? result.rowCount : result.rows.length,
+            rows: result.rows || []
+          };
+        }
+      };
+
+      try {
+        const response = await workFn(transactionalExecutor);
+        await client.query('COMMIT');
+        return response;
+      } catch (error) {
+        try {
+          await client.query('ROLLBACK');
+        } catch {
+          // keep original error as source of failure
+        }
+
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
     async close() {
       await pool.end();
     }

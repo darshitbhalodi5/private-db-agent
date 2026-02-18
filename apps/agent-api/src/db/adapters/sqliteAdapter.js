@@ -57,6 +57,22 @@ function all(db, sql, params = []) {
   });
 }
 
+async function executeStatement(db, { mode, sql, values }) {
+  if (mode === 'read') {
+    const rows = await all(db, sql, values);
+    return {
+      rowCount: rows.length,
+      rows
+    };
+  }
+
+  const writeResult = await run(db, sql, values);
+  return {
+    rowCount: writeResult.changes,
+    rows: []
+  };
+}
+
 async function initializeSchema(db) {
   await run(
     db,
@@ -229,19 +245,38 @@ export async function createSqliteAdapter(config) {
   return {
     dialect: 'sqlite',
     async execute({ mode, sql, values }) {
-      if (mode === 'read') {
-        const rows = await all(db, sql, values);
-        return {
-          rowCount: rows.length,
-          rows
-        };
+      return executeStatement(db, { mode, sql, values });
+    },
+    async runInTransaction(workFn) {
+      if (typeof workFn !== 'function') {
+        throw new Error('runInTransaction requires a callback function.');
       }
 
-      const writeResult = await run(db, sql, values);
-      return {
-        rowCount: writeResult.changes,
-        rows: []
+      await run(db, 'BEGIN IMMEDIATE');
+
+      const transactionalExecutor = {
+        dialect: 'sqlite',
+        execute: async ({ mode, sql, values }) =>
+          executeStatement(db, {
+            mode,
+            sql,
+            values
+          })
       };
+
+      try {
+        const result = await workFn(transactionalExecutor);
+        await run(db, 'COMMIT');
+        return result;
+      } catch (error) {
+        try {
+          await run(db, 'ROLLBACK');
+        } catch {
+          // keep original error as source of failure
+        }
+
+        throw error;
+      }
     },
     async close() {
       await new Promise((resolve, reject) => {
