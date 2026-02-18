@@ -139,6 +139,33 @@ PRIVATE_DB_AGENT_AUTH_V1
 Capabilities and templates are mapped in `apps/agent-api/src/policy/capabilityRules.js`.
 Template definitions (SQL + params) are in `apps/agent-api/src/query/templateRegistry.js`.
 
+## Policy grant APIs (Task 3)
+
+The policy engine now supports wallet grants scoped by database/table and operation:
+
+- `GET /v1/policy/grants?tenantId=<tenantId>&walletAddress=<optionalWallet>`
+- `POST /v1/policy/grants`
+- `POST /v1/policy/grants/revoke`
+- `POST /v1/policy/preview-decision`
+
+Grant creation/revoke payloads require:
+
+- `tenantId`
+- `actorWallet`
+- signed `auth` envelope (when `AUTH_ENABLED=true`)
+
+Decision preview evaluates precedence in deterministic order:
+
+1. table-operation deny
+2. table-operation allow
+3. db-operation deny
+4. db-operation allow
+5. table `all` deny
+6. table `all` allow
+7. db `all` deny
+8. db `all` allow
+9. fallback deny
+
 ## Response receipt contract
 
 Every query response now includes:
