@@ -42,8 +42,9 @@ test('rejects non-object payload', () => {
   const result = handleControlPlaneSubmission(null);
 
   assert.equal(result.statusCode, 400);
-  assert.equal(result.body.error, 'VALIDATION_ERROR');
-  assert.match(result.body.message, /JSON object/);
+  assert.equal(result.body.error, 'SCHEMA_DSL_VALIDATION_FAILED');
+  assert.equal(Array.isArray(result.body.details.issues), true);
+  assert.match(result.body.details.issues[0].message, /JSON object/);
 });
 
 test('rejects payload without creator wallet', () => {
@@ -53,8 +54,12 @@ test('rejects payload without creator wallet', () => {
   const result = handleControlPlaneSubmission(payload);
 
   assert.equal(result.statusCode, 400);
-  assert.equal(result.body.error, 'VALIDATION_ERROR');
-  assert.match(result.body.message, /creator.walletAddress/);
+  assert.equal(result.body.error, 'SCHEMA_DSL_VALIDATION_FAILED');
+  assert.equal(Array.isArray(result.body.details.issues), true);
+  assert.equal(
+    result.body.details.issues.some((issue) => issue.path === 'creator.walletAddress'),
+    true
+  );
 });
 
 test('rejects payload with invalid table field', () => {
@@ -64,9 +69,12 @@ test('rejects payload with invalid table field', () => {
   const result = handleControlPlaneSubmission(payload);
 
   assert.equal(result.statusCode, 400);
-  assert.equal(result.body.error, 'VALIDATION_ERROR');
+  assert.equal(result.body.error, 'SCHEMA_DSL_VALIDATION_FAILED');
   assert.equal(Array.isArray(result.body.details.issues), true);
-  assert.match(result.body.details.issues[0], /fields\[0\]\.name/);
+  assert.equal(
+    result.body.details.issues.some((issue) => issue.path === 'tables[0].fields[0].name'),
+    true
+  );
 });
 
 test('accepts valid payload and returns submission metadata', () => {
@@ -85,4 +93,7 @@ test('accepts valid payload and returns submission metadata', () => {
   assert.equal(result.body.submission.tableCount, 1);
   assert.equal(result.body.submission.grantCount, 1);
   assert.equal(result.body.submission.receivedAt, '2026-02-18T00:00:00.000Z');
+  assert.equal(result.body.schema.id.includes('schema-dsl'), true);
+  assert.equal(Array.isArray(result.body.migrationPlan.steps), true);
+  assert.equal(result.body.migrationPlan.steps.length, 2);
 });

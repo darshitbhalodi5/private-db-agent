@@ -66,16 +66,19 @@ export async function POST(request) {
     const upstreamBody = await upstreamResponse.json().catch(() => null);
 
     if (!upstreamResponse.ok) {
+      if (upstreamBody && typeof upstreamBody === 'object') {
+        return NextResponse.json(upstreamBody, { status: upstreamResponse.status });
+      }
+
       return NextResponse.json(
         {
           error: 'UPSTREAM_SUBMISSION_FAILED',
           message: 'Agent API rejected submission payload.',
           submissionId,
           receivedAt,
-          upstreamStatus: upstreamResponse.status,
-          upstreamBody
+          upstreamStatus: upstreamResponse.status
         },
-        { status: 502 }
+        { status: upstreamResponse.status }
       );
     }
 
