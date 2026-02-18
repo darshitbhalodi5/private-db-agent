@@ -687,7 +687,10 @@ async function buildRuntimePolicyAdminService() {
 
   return createPolicyAdminService({
     grantStore,
-    mutationAuthService: createPolicyMutationAuthService(runtimeConfig.auth)
+    mutationAuthService: createPolicyMutationAuthService({
+      ...runtimeConfig.auth,
+      enabled: true
+    })
   });
 }
 
