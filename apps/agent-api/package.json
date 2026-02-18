@@ -1,0 +1,22 @@
+{
+  "name": "@eigen-private-db-agent/agent-api",
+  "version": "0.1.0",
+  "description": "Policy-gated database agent backend service",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "test": "node --test",
+    "build": "echo \"No build step for agent-api\"",
+    "lint": "echo \"No lint configured for agent-api\""
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "ethers": "^6.16.0",
+    "pg": "^8.18.0",
+    "sqlite3": "^5.1.7"
+  }
+}

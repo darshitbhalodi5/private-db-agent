@@ -1,23 +1,25 @@
 {
-  "name": "eigen-private-db-agent",
+  "name": "eigen-private-db-agent-monorepo",
+  "private": true,
   "version": "0.1.0",
-  "description": "Hackathon MVP: policy-gated database agent with verifiable receipts",
-  "type": "module",
+  "description": "Monorepo for Eigen private DB agent (frontend + backend + shared packages)",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "dev": "node --watch src/server.js",
-    "start": "node src/server.js",
-    "test": "node --test",
+    "dev": "npm run dev -w apps/agent-api",
+    "dev:api": "npm run dev -w apps/agent-api",
+    "dev:web": "npm run dev -w apps/web",
+    "test": "npm run test -w apps/agent-api",
+    "test:all": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
     "demo:smoke": "node scripts/demo-smoke.mjs http://localhost:8080",
     "docker:up": "docker compose up -d --build",
     "docker:down": "docker compose down -v"
   },
   "engines": {
     "node": ">=22"
-  },
-  "license": "MIT",
-  "dependencies": {
-    "ethers": "^6.16.0",
-    "pg": "^8.18.0",
-    "sqlite3": "^5.1.7"
   }
 }
