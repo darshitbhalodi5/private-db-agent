@@ -196,7 +196,20 @@ Execution rules:
 - No raw SQL accepted from clients.
 - Table name and column identifiers are validated.
 - Table must exist in `managed_tables` for tenant.
-- Policy decision is enforced before execution.
+- Signed actor auth + policy decision are enforced before execution.
+
+## Agent role enforcement (Task 5)
+
+Privileged mutation/execution paths now enforce:
+
+- Signed actor envelope validation (nonce + timestamp + signature).
+- Policy decision check for requested scope/operation.
+- Explicit rejection of bypass flags (`agentOverride`, `bypassPolicy`, `executeAsAgent`, etc.).
+
+Result:
+
+- Agent cannot execute privileged actions without a valid signed actor.
+- Agent cannot bypass policy with internal override-style payload fields.
 
 ## Response receipt contract
 
