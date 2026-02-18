@@ -45,6 +45,9 @@ services:
       PROOF_RECEIPT_ENABLED: "true"
       PROOF_HASH_ALGORITHM: sha256
       PROOF_TRUST_MODEL: eigencompute-mainnet-alpha
+      PROOF_RUNTIME_VERIFICATION_MODE: enforce
+      PROOF_ATTESTATION_SOURCE: config
+      PROOF_ATTESTATION_MAX_AGE_SECONDS: "900"
       PROOF_APP_ID: demo-app-id
       PROOF_IMAGE_DIGEST: sha256:demo-image-digest
       PROOF_ATTESTATION_REPORT_HASH: sha256:demo-attestation-report

@@ -61,6 +61,13 @@ async function main() {
     throw new Error('No demo scenarios returned by API.');
   }
 
+  const runtimeAttestation = await fetchJson(`${baseUrl}/v1/runtime/attestation`);
+  if (!runtimeAttestation.ok) {
+    throw new Error(
+      `Runtime attestation check failed (${runtimeAttestation.status}): ${JSON.stringify(runtimeAttestation.body)}`
+    );
+  }
+
   const results = [];
   for (const scenario of scenarios) {
     const result = await runScenario(scenario);
@@ -71,6 +78,11 @@ async function main() {
 
   console.log(JSON.stringify({
     baseUrl,
+    runtime: {
+      verified: Boolean(runtimeAttestation.body?.runtime?.verified),
+      verificationStatus: runtimeAttestation.body?.runtime?.verificationStatus || null,
+      claimsHash: runtimeAttestation.body?.runtime?.claimsHash || null
+    },
     total: results.length,
     failed: failed.length,
     results

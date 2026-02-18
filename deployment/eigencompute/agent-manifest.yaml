@@ -1,0 +1,44 @@
+apiVersion: eigencloud/v1alpha1
+kind: AgentDeployment
+metadata:
+  name: private-db-agent
+  labels:
+    app: private-db-agent
+spec:
+  runtime:
+    type: eigencompute
+    appId: private-db-agent-demo
+    image: ghcr.io/your-org/private-db-agent:latest
+    imageDigest: sha256:replace-with-production-image-digest
+  service:
+    port: 8080
+    healthPath: /health
+  env:
+    - name: NODE_ENV
+      value: production
+    - name: PORT
+      value: "8080"
+    - name: DB_DRIVER
+      value: postgres
+    - name: DATABASE_URL
+      valueFrom:
+        secretKeyRef:
+          name: private-db-agent-secrets
+          key: database_url
+    - name: PROOF_RUNTIME_VERIFICATION_MODE
+      value: enforce
+    - name: PROOF_ATTESTATION_SOURCE
+      value: file
+    - name: PROOF_ATTESTATION_FILE_PATH
+      value: /etc/private-db-agent/runtime-attestation.json
+    - name: PROOF_ATTESTATION_MAX_AGE_SECONDS
+      value: "900"
+    - name: PROOF_TRUST_MODEL
+      value: eigencompute-mainnet-alpha
+  volumes:
+    - name: runtime-attestation
+      mountPath: /etc/private-db-agent
+      readOnly: true
+      source:
+        configMap:
+          name: private-db-agent-attestation
