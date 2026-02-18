@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createSqliteAdapter } from '../src/db/adapters/sqliteAdapter.js';
+import { createActionAuthorizationService } from '../src/services/actionAuthorizationService.js';
 import { createDataOperationService } from '../src/services/dataOperationService.js';
 import { createMigrationRunnerService } from '../src/services/migrationRunnerService.js';
 import { createPolicyAdminService } from '../src/services/policyAdminService.js';
@@ -33,9 +34,15 @@ async function withDataOperationContext(testFn) {
     now: () => '2026-02-18T00:00:00.000Z'
   });
 
+  const actionAuthorizationService = createActionAuthorizationService({
+    grantStore,
+    mutationAuthService: createPolicyMutationAuthService({ enabled: false })
+  });
+
   const dataOperationService = createDataOperationService({
     databaseAdapter: adapter,
-    grantStore
+    grantStore,
+    actionAuthorizationService
   });
 
   try {
@@ -151,6 +158,7 @@ test('data operation templates execute read/insert/update and deny delete by pol
     await bootstrapAndGrantManager(policyAdminService);
 
     const insertResult = await dataOperationService.execute({
+      requestId: 'req_data_insert',
       tenantId,
       actorWallet: managerWallet,
       operation: 'insert',
@@ -164,6 +172,7 @@ test('data operation templates execute read/insert/update and deny delete by pol
     assert.equal(insertResult.body.rowCount, 1);
 
     const readResult = await dataOperationService.execute({
+      requestId: 'req_data_read',
       tenantId,
       actorWallet: managerWallet,
       operation: 'read',
@@ -177,6 +186,7 @@ test('data operation templates execute read/insert/update and deny delete by pol
     assert.equal(readResult.body.rows[0].quantity, 4);
 
     const updateResult = await dataOperationService.execute({
+      requestId: 'req_data_update',
       tenantId,
       actorWallet: managerWallet,
       operation: 'update',
@@ -192,6 +202,7 @@ test('data operation templates execute read/insert/update and deny delete by pol
     assert.equal(updateResult.body.rowCount, 1);
 
     const deleteDenied = await dataOperationService.execute({
+      requestId: 'req_data_delete',
       tenantId,
       actorWallet: managerWallet,
       operation: 'delete',
@@ -208,6 +219,7 @@ test('data operation templates execute read/insert/update and deny delete by pol
 test('data operation service rejects raw sql input and unmanaged tables', async () => {
   await withDataOperationContext(async ({ dataOperationService }) => {
     const rawSqlResult = await dataOperationService.execute({
+      requestId: 'req_raw_sql',
       tenantId,
       actorWallet: managerWallet,
       operation: 'read',
@@ -218,6 +230,7 @@ test('data operation service rejects raw sql input and unmanaged tables', async 
     assert.equal(rawSqlResult.body.error, 'RAW_SQL_NOT_ALLOWED');
 
     const unmanagedTableResult = await dataOperationService.execute({
+      requestId: 'req_unmanaged_table',
       tenantId,
       actorWallet: managerWallet,
       operation: 'read',
