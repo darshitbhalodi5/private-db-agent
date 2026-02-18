@@ -46,8 +46,19 @@ function createAllowAuthorizationService() {
   };
 }
 
+function createAiDraftStoreStub({
+  draft = null,
+  approval = null
+} = {}) {
+  return {
+    getDraft: async () => draft,
+    getApproval: async () => approval
+  };
+}
+
 test('schema apply rejects raw sql payload input', async () => {
   const schemaApplyService = createSchemaApplyService({
+    aiDraftStore: createAiDraftStoreStub(),
     actionAuthorizationService: createAllowAuthorizationService(),
     migrationRunnerService: {
       applyMigrationPlan: async () => ({
@@ -68,6 +79,7 @@ test('schema apply rejects raw sql payload input', async () => {
 
 test('schema apply returns migration apply failure safely', async () => {
   const schemaApplyService = createSchemaApplyService({
+    aiDraftStore: createAiDraftStoreStub(),
     actionAuthorizationService: createAllowAuthorizationService(),
     migrationRunnerService: {
       applyMigrationPlan: async () => ({
@@ -88,6 +100,7 @@ test('schema apply returns migration apply failure safely', async () => {
 
 test('schema apply returns success with compiled migration metadata', async () => {
   const schemaApplyService = createSchemaApplyService({
+    aiDraftStore: createAiDraftStoreStub(),
     actionAuthorizationService: createAllowAuthorizationService(),
     migrationRunnerService: {
       applyMigrationPlan: async () => ({
@@ -113,6 +126,7 @@ test('schema apply returns success with compiled migration metadata', async () =
 
 test('schema apply surfaces authorization failures', async () => {
   const schemaApplyService = createSchemaApplyService({
+    aiDraftStore: createAiDraftStoreStub(),
     actionAuthorizationService: {
       authorize: async () => ({
         ok: false,
@@ -135,4 +149,70 @@ test('schema apply surfaces authorization failures', async () => {
 
   assert.equal(result.statusCode, 403);
   assert.equal(result.body.error, 'POLICY_DENIED');
+});
+
+test('schema apply requires AI approval metadata for eigen-ai assisted payloads', async () => {
+  const schemaApplyService = createSchemaApplyService({
+    aiDraftStore: createAiDraftStoreStub(),
+    actionAuthorizationService: createAllowAuthorizationService(),
+    migrationRunnerService: {
+      applyMigrationPlan: async () => ({
+        ok: true,
+        data: {
+          migrationId: 'migration_1'
+        }
+      })
+    }
+  });
+
+  const payload = createValidPayload();
+  payload.aiAssist = {
+    source: 'eigen-ai'
+  };
+
+  const result = await schemaApplyService.apply(payload);
+
+  assert.equal(result.statusCode, 403);
+  assert.equal(result.body.error, 'AI_DRAFT_APPROVAL_REQUIRED');
+});
+
+test('schema apply accepts valid AI approval gate', async () => {
+  const payload = createValidPayload();
+  payload.aiAssist = {
+    source: 'eigen-ai',
+    draftId: 'draft-1',
+    draftHash: 'draft-hash-1',
+    approvalId: 'approval-1',
+    approvedBy: '0x8ba1f109551bd432803012645ac136ddd64dba72'
+  };
+
+  const schemaApplyService = createSchemaApplyService({
+    aiDraftStore: createAiDraftStoreStub({
+      draft: {
+        draftId: 'draft-1',
+        draftType: 'schema',
+        draftHash: 'draft-hash-1',
+        planHash: null
+      },
+      approval: {
+        approvalId: 'approval-1',
+        draftHash: 'draft-hash-1',
+        approvedBy: '0x8ba1f109551bd432803012645ac136ddd64dba72'
+      }
+    }),
+    actionAuthorizationService: createAllowAuthorizationService(),
+    migrationRunnerService: {
+      applyMigrationPlan: async () => ({
+        ok: true,
+        data: {
+          migrationId: 'migration_1'
+        }
+      })
+    }
+  });
+
+  const result = await schemaApplyService.apply(payload);
+
+  assert.equal(result.statusCode, 201);
+  assert.equal(result.body.aiApproval.approvalId, 'approval-1');
 });

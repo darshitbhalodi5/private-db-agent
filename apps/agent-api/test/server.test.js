@@ -92,6 +92,10 @@ test('loadConfig returns default values including database settings', () => {
   assert.equal(config.database.driver, 'sqlite');
   assert.equal(config.database.sqlite.filePath, './data/private-db-agent.sqlite');
   assert.equal(config.database.postgres.maxPoolSize, 10);
+  assert.equal(config.ai.enabled, true);
+  assert.equal(config.ai.provider, 'mock');
+  assert.equal(config.ai.model, 'eigen-ai-mock-v1');
+  assert.equal(typeof config.ai.signerPrivateKey, 'string');
 });
 
 test('query service returns execution result after auth and policy pass', async () => {
