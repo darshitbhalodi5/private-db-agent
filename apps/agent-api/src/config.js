@@ -80,6 +80,17 @@ function parseString(name, rawValue, defaultValue = '') {
   return rawValue;
 }
 
+function parseCsvList(rawValue) {
+  if (!rawValue || typeof rawValue !== 'string') {
+    return [];
+  }
+
+  return rawValue
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+}
+
 function parseEnum(name, rawValue, allowedValues, defaultValue) {
   const value = rawValue || defaultValue;
   if (!allowedValues.includes(value)) {
@@ -216,6 +227,24 @@ export function loadConfig(env = process.env) {
         DEFAULT_AI_SIGNER_PRIVATE_KEY
       ),
       signerAddress: parseString('AI_SIGNER_ADDRESS', env.AI_SIGNER_ADDRESS, '')
+    },
+    a2a: {
+      enabled: parseBoolean(env.A2A_ENABLED, true),
+      allowUnsigned: parseBoolean(env.A2A_ALLOW_UNSIGNED, false),
+      sharedSecret: parseString('A2A_SHARED_SECRET', env.A2A_SHARED_SECRET, ''),
+      allowedAgentIds: parseCsvList(env.A2A_ALLOWED_AGENT_IDS),
+      adminAgentIds: parseCsvList(env.A2A_ADMIN_AGENT_IDS),
+      taskAllowlist: parseJsonObject('A2A_TASK_ALLOWLIST_JSON', env.A2A_TASK_ALLOWLIST_JSON) || {},
+      nonceTtlSeconds: parsePositiveInteger(
+        'A2A_NONCE_TTL_SECONDS',
+        env.A2A_NONCE_TTL_SECONDS,
+        DEFAULT_NONCE_TTL_SECONDS
+      ),
+      maxFutureSkewSeconds: parsePositiveInteger(
+        'A2A_MAX_FUTURE_SKEW_SECONDS',
+        env.A2A_MAX_FUTURE_SKEW_SECONDS,
+        DEFAULT_MAX_FUTURE_SKEW_SECONDS
+      )
     }
   };
 }

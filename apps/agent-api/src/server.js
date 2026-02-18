@@ -1,6 +1,14 @@
 import http from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { loadConfig } from './config.js';
+import {
+  handleA2aAgentCard,
+  handleA2aContracts,
+  handleA2aTaskCreate,
+  handleA2aTaskGet,
+  handleA2aTaskList
+} from './routes/a2a.js';
 import {
   handleAiApproveDraft,
   handleAiPolicyDraft,
@@ -27,6 +35,17 @@ export function createServer(config = loadConfig()) {
   return http.createServer(async (req, res) => {
     const requestUrl = new URL(req.url || '/', 'http://localhost');
     const pathname = requestUrl.pathname;
+    const correlationIdHeader = req.headers['x-correlation-id'];
+    const correlationId =
+      typeof correlationIdHeader === 'string' && correlationIdHeader.trim().length > 0
+        ? correlationIdHeader.trim()
+        : randomUUID();
+    req.context = {
+      correlationId,
+      apiVersion: 'v1'
+    };
+    res.setHeader('x-correlation-id', correlationId);
+    res.setHeader('x-api-version', 'v1');
 
     if (req.method === 'GET' && pathname === '/health') {
       handleHealth(req, res, config);
@@ -35,6 +54,37 @@ export function createServer(config = loadConfig()) {
 
     if (req.method === 'POST' && pathname === '/v1/query') {
       await handleQuery(req, res);
+      return;
+    }
+
+    if (req.method === 'GET' && pathname === '/.well-known/agent-card.json') {
+      await handleA2aAgentCard(req, res, requestUrl);
+      return;
+    }
+
+    if (req.method === 'GET' && pathname === '/v1/a2a/agent-card') {
+      await handleA2aAgentCard(req, res, requestUrl);
+      return;
+    }
+
+    if (req.method === 'GET' && pathname === '/v1/a2a/contracts') {
+      await handleA2aContracts(req, res, requestUrl);
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/v1/a2a/tasks') {
+      await handleA2aTaskCreate(req, res, requestUrl);
+      return;
+    }
+
+    if (req.method === 'GET' && pathname === '/v1/a2a/tasks') {
+      await handleA2aTaskList(req, res, requestUrl);
+      return;
+    }
+
+    const a2aTaskMatch = pathname.match(/^\/v1\/a2a\/tasks\/([^/]+)$/);
+    if (req.method === 'GET' && a2aTaskMatch) {
+      await handleA2aTaskGet(req, res, requestUrl, decodeURIComponent(a2aTaskMatch[1]));
       return;
     }
 
