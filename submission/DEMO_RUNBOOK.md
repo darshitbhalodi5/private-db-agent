@@ -34,6 +34,12 @@ node scripts/demo-smoke.mjs http://localhost:8080
 curl -s http://localhost:8080/v1/runtime/attestation
 ```
 
+6. Verify A2A agent discovery endpoint:
+
+```bash
+curl -s http://localhost:8080/.well-known/agent-card.json
+```
+
 ## Demo Scenarios
 
 1. `allow-balance-read`

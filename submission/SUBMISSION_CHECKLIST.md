@@ -10,6 +10,9 @@
 - [x] Demo UI with allow/deny scenarios.
 - [x] Runtime attestation status endpoint (`/v1/runtime/attestation`).
 - [x] Sensitive-op deny gate when attestation verification fails in enforce mode.
+- [x] A2A agent card and task lifecycle endpoints.
+- [x] Idempotency keys and replay-safe A2A task handling.
+- [x] Agent-to-agent authentication/authorization controls.
 
 ## Packaging
 

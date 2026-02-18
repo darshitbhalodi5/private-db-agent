@@ -259,6 +259,49 @@ Deployment artifacts:
 - `deployment/eigencompute/runtime-attestation.sample.json`
 - `scripts/render-eigencompute-manifest.sh` (or `npm run eigen:manifest`)
 
+## A2A interoperability (Task 8)
+
+A2A discovery and contract endpoints:
+
+- `GET /.well-known/agent-card.json`
+- `GET /v1/a2a/agent-card`
+- `GET /v1/a2a/contracts`
+
+A2A task lifecycle endpoints:
+
+- `POST /v1/a2a/tasks`
+- `GET /v1/a2a/tasks`
+- `GET /v1/a2a/tasks/{taskId}`
+
+Supported task types:
+
+- `query.execute`
+- `policy.preview-decision`
+- `policy.grant.create`
+- `policy.grant.revoke`
+- `schema.apply`
+- `data.execute`
+- `ai.schema-draft`
+- `ai.policy-draft`
+- `ai.approve-draft`
+
+A2A security and replay protection:
+
+- HMAC request authentication headers:
+  - `x-agent-id`
+  - `x-agent-timestamp`
+  - `x-agent-nonce`
+  - `x-agent-signature`
+- Task creation also requires `x-idempotency-key`.
+- Nonce replay is blocked within TTL.
+- Idempotency key replay with same payload returns existing task.
+- Idempotency key reuse with different payload returns conflict.
+
+Versioning and tracing:
+
+- API version header: `x-api-version: v1`
+- Correlation header: `x-correlation-id` (accepted or generated on every request)
+
 ## Response receipt contract
 
 Every query response now includes:
@@ -333,3 +376,11 @@ Proof/verification env vars:
 - `PROOF_IMAGE_DIGEST=...`
 - `PROOF_ATTESTATION_REPORT_HASH=...`
 - `PROOF_ONCHAIN_DEPLOYMENT_TX_HASH=...`
+- `A2A_ENABLED=true`
+- `A2A_ALLOW_UNSIGNED=false`
+- `A2A_SHARED_SECRET=...`
+- `A2A_ALLOWED_AGENT_IDS=agent-a,agent-b`
+- `A2A_ADMIN_AGENT_IDS=orchestrator-agent`
+- `A2A_TASK_ALLOWLIST_JSON={"agent-a":["query.execute","policy.preview-decision"]}`
+- `A2A_NONCE_TTL_SECONDS=300`
+- `A2A_MAX_FUTURE_SKEW_SECONDS=60`
