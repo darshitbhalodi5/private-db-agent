@@ -1,6 +1,9 @@
 import { loadConfig } from '../config.js';
 import { createDatabaseAdapter } from '../db/databaseAdapterFactory.js';
+import { createActionAuthorizationService } from './actionAuthorizationService.js';
 import { createMigrationRunnerService } from './migrationRunnerService.js';
+import { createPolicyGrantStore } from './policyGrantStore.js';
+import { createPolicyMutationAuthService } from './policyMutationAuthService.js';
 import { validateAndCompileSchemaDsl } from './schemaDslService.js';
 
 const TENANT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;
@@ -30,9 +33,13 @@ function containsRawSqlInput(payload) {
   return false;
 }
 
-export function createSchemaApplyService({ migrationRunnerService }) {
+export function createSchemaApplyService({ migrationRunnerService, actionAuthorizationService }) {
   if (!migrationRunnerService) {
     throw new Error('migrationRunnerService is required.');
+  }
+
+  if (!actionAuthorizationService) {
+    throw new Error('actionAuthorizationService is required.');
   }
 
   async function apply(payload) {
@@ -67,6 +74,48 @@ export function createSchemaApplyService({ migrationRunnerService }) {
       };
     }
 
+    if (typeof payload.requestId !== 'string' || payload.requestId.trim().length === 0) {
+      return {
+        statusCode: 400,
+        body: {
+          error: 'VALIDATION_ERROR',
+          message: 'requestId is required.'
+        }
+      };
+    }
+
+    if (typeof payload.actorWallet !== 'string' || payload.actorWallet.trim().length === 0) {
+      return {
+        statusCode: 400,
+        body: {
+          error: 'VALIDATION_ERROR',
+          message: 'actorWallet is required.'
+        }
+      };
+    }
+
+    const authorizationResult = await actionAuthorizationService.authorize({
+      requestId: payload.requestId,
+      tenantId,
+      actorWallet: payload.actorWallet,
+      auth: payload.auth,
+      action: 'schema:apply',
+      actionPayload: {
+        database: payload.database,
+        tables: payload.tables
+      },
+      scopeType: 'database',
+      scopeId: '*',
+      operation: 'alter'
+    });
+
+    if (!authorizationResult.ok) {
+      return {
+        statusCode: authorizationResult.statusCode,
+        body: authorizationResult.body
+      };
+    }
+
     const schemaDslResult = validateAndCompileSchemaDsl(payload);
     if (!schemaDslResult.ok) {
       return {
@@ -93,6 +142,11 @@ export function createSchemaApplyService({ migrationRunnerService }) {
       body: {
         code: 'SCHEMA_APPLIED',
         message: 'Schema DSL validated and migration plan applied transactionally.',
+        authorization: {
+          actorWallet: authorizationResult.actorWallet,
+          decision: authorizationResult.decision,
+          signatureHash: authorizationResult.signatureHash
+        },
         schema: schemaDslResult.schema,
         migrationPlan: schemaDslResult.migrationPlan,
         migration: migrationApply.data
@@ -111,9 +165,20 @@ let runtimeSchemaApplyServicePromise = null;
 async function buildRuntimeSchemaApplyService() {
   const databaseAdapter = await createDatabaseAdapter(runtimeConfig.database);
   const migrationRunnerService = createMigrationRunnerService({ databaseAdapter });
+  const grantStore = createPolicyGrantStore({ databaseAdapter });
+  await grantStore.ensureInitialized();
+
+  const mutationAuthService = createPolicyMutationAuthService({
+    ...runtimeConfig.auth,
+    enabled: true
+  });
 
   return createSchemaApplyService({
-    migrationRunnerService
+    migrationRunnerService,
+    actionAuthorizationService: createActionAuthorizationService({
+      grantStore,
+      mutationAuthService
+    })
   });
 }
 

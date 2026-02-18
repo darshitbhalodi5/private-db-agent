@@ -1,7 +1,8 @@
 import { loadConfig } from '../config.js';
 import { createDatabaseAdapter } from '../db/databaseAdapterFactory.js';
+import { createActionAuthorizationService } from './actionAuthorizationService.js';
 import { createPolicyGrantStore } from './policyGrantStore.js';
-import { evaluatePolicyDecision } from './policyDecisionEngine.js';
+import { createPolicyMutationAuthService } from './policyMutationAuthService.js';
 
 const TENANT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 const IDENTIFIER_PATTERN = /^[a-z][a-z0-9_]{0,62}$/;
@@ -199,13 +200,21 @@ function buildWhereClause({ dialect, filters = [], startingIndex = 1 }) {
   };
 }
 
-export function createDataOperationService({ databaseAdapter, grantStore }) {
+export function createDataOperationService({
+  databaseAdapter,
+  grantStore,
+  actionAuthorizationService
+}) {
   if (!databaseAdapter || typeof databaseAdapter.execute !== 'function') {
     throw new Error('databaseAdapter is required for data operation service.');
   }
 
   if (!grantStore) {
     throw new Error('grantStore is required for data operation service.');
+  }
+
+  if (!actionAuthorizationService) {
+    throw new Error('actionAuthorizationService is required for data operation service.');
   }
 
   async function ensureManagedTable({ tenantId, tableName }) {
@@ -242,49 +251,6 @@ export function createDataOperationService({ databaseAdapter, grantStore }) {
     }
   }
 
-  async function evaluatePolicy({ tenantId, actorWallet, operation, tableName }) {
-    const grants = await grantStore.listActiveGrants({
-      tenantId,
-      walletAddress: actorWallet
-    });
-
-    const decisionResult = evaluatePolicyDecision({
-      tenantId,
-      walletAddress: actorWallet,
-      scopeType: 'table',
-      scopeId: tableName,
-      operation,
-      grants
-    });
-
-    if (!decisionResult.ok) {
-      return {
-        ok: false,
-        statusCode: 400,
-        body: decisionResult.error
-      };
-    }
-
-    if (!decisionResult.decision.allowed) {
-      return {
-        ok: false,
-        statusCode: 403,
-        body: {
-          error: 'POLICY_DENIED',
-          message: decisionResult.decision.message,
-          details: {
-            decision: decisionResult.decision
-          }
-        }
-      };
-    }
-
-    return {
-      ok: true,
-      decision: decisionResult.decision
-    };
-  }
-
   async function execute(payload) {
     const baseValidation = validateBasePayload(payload);
     if (!baseValidation.ok) {
@@ -299,6 +265,20 @@ export function createDataOperationService({ databaseAdapter, grantStore }) {
 
     const { tenantId, actorWallet, operation, tableName } = baseValidation.normalized;
 
+    const requestId =
+      typeof payload.requestId === 'string' && payload.requestId.trim().length > 0
+        ? payload.requestId.trim()
+        : null;
+    if (!requestId) {
+      return {
+        statusCode: 400,
+        body: {
+          error: 'VALIDATION_ERROR',
+          message: 'requestId is required.'
+        }
+      };
+    }
+
     const managed = await ensureManagedTable({ tenantId, tableName });
     if (!managed) {
       return {
@@ -310,16 +290,34 @@ export function createDataOperationService({ databaseAdapter, grantStore }) {
       };
     }
 
-    const policyResult = await evaluatePolicy({
+    const authorizationResult = await actionAuthorizationService.authorize({
+      requestId,
       tenantId,
       actorWallet,
+      auth: payload.auth,
+      action: 'data:execute',
+      actionPayload: {
+        tableName,
+        operation,
+        values: payload.values || null,
+        filters: payload.filters || null,
+        columns: payload.columns || null,
+        limit: payload.limit || null,
+        agentOverride: payload.agentOverride || null,
+        bypassPolicy: payload.bypassPolicy || null,
+        skipAuth: payload.skipAuth || null,
+        executeAsAgent: payload.executeAsAgent || null,
+        superuser: payload.superuser || null,
+        trustedOperator: payload.trustedOperator || null
+      },
+      scopeType: 'table',
+      scopeId: tableName,
       operation,
-      tableName
     });
-    if (!policyResult.ok) {
+    if (!authorizationResult.ok) {
       return {
-        statusCode: policyResult.statusCode,
-        body: policyResult.body
+        statusCode: authorizationResult.statusCode,
+        body: authorizationResult.body
       };
     }
 
@@ -389,7 +387,11 @@ export function createDataOperationService({ databaseAdapter, grantStore }) {
           tableName,
           rowCount: result.rowCount,
           rows: result.rows,
-          policy: policyResult.decision
+          authorization: {
+            actorWallet: authorizationResult.actorWallet,
+            decision: authorizationResult.decision,
+            signatureHash: authorizationResult.signatureHash
+          }
         }
       };
     }
@@ -425,7 +427,11 @@ export function createDataOperationService({ databaseAdapter, grantStore }) {
           tableName,
           rowCount: result.rowCount,
           rows: [],
-          policy: policyResult.decision
+          authorization: {
+            actorWallet: authorizationResult.actorWallet,
+            decision: authorizationResult.decision,
+            signatureHash: authorizationResult.signatureHash
+          }
         }
       };
     }
@@ -480,7 +486,11 @@ export function createDataOperationService({ databaseAdapter, grantStore }) {
           tableName,
           rowCount: result.rowCount,
           rows: [],
-          policy: policyResult.decision
+          authorization: {
+            actorWallet: authorizationResult.actorWallet,
+            decision: authorizationResult.decision,
+            signatureHash: authorizationResult.signatureHash
+          }
         }
       };
     }
@@ -516,7 +526,11 @@ export function createDataOperationService({ databaseAdapter, grantStore }) {
         tableName,
         rowCount: result.rowCount,
         rows: [],
-        policy: policyResult.decision
+        authorization: {
+          actorWallet: authorizationResult.actorWallet,
+          decision: authorizationResult.decision,
+          signatureHash: authorizationResult.signatureHash
+        }
       }
     };
   }
@@ -533,10 +547,18 @@ async function buildRuntimeDataOperationService() {
   const databaseAdapter = await createDatabaseAdapter(runtimeConfig.database);
   const grantStore = createPolicyGrantStore({ databaseAdapter });
   await grantStore.ensureInitialized();
+  const mutationAuthService = createPolicyMutationAuthService({
+    ...runtimeConfig.auth,
+    enabled: true
+  });
 
   return createDataOperationService({
     databaseAdapter,
-    grantStore
+    grantStore,
+    actionAuthorizationService: createActionAuthorizationService({
+      grantStore,
+      mutationAuthService
+    })
   });
 }
 
