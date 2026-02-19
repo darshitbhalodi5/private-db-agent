@@ -94,6 +94,7 @@ Demo env vars:
 - `DEMO_ENABLED=true`
 - `DEMO_SIGNER_PRIVATE_KEY=...` (optional)
 - `DEMO_ALT_SIGNER_PRIVATE_KEY=...` (optional)
+- `DEMO_TENANT_ID=tenant_demo`
 - `DEMO_TARGET_WALLET_ADDRESS=0x8ba1f109551bd432803012645ac136ddd64dba72`
 - `DEMO_DEFAULT_CHAIN_ID=1`
 
@@ -117,6 +118,7 @@ Postgres mode:
 ```json
 {
   "requestId": "req-1",
+  "tenantId": "tenant_demo",
   "requester": "0xYourWalletAddress",
   "capability": "balances:read",
   "queryTemplate": "wallet_balances",
@@ -138,6 +140,9 @@ PRIVATE_DB_AGENT_AUTH_V1
 
 Capabilities and templates are mapped in `apps/agent-api/src/policy/capabilityRules.js`.
 Template definitions (SQL + params) are in `apps/agent-api/src/query/templateRegistry.js`.
+`/v1/query` now requires both:
+- capability/template allow from capability policy
+- explicit grant allow from tenant policy grants (default deny when no matching grant)
 
 ## Policy grant APIs (Task 3)
 
