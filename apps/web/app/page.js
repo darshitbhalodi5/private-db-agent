@@ -130,6 +130,21 @@ function buildApplyActionPayload(payload) {
   };
 }
 
+function buildApproveDraftActionPayload({ draftId, draftHash }) {
+  return {
+    draftId,
+    draftHash
+  };
+}
+
+function unwrapForwardedBody(body) {
+  if (body && typeof body === 'object' && body.upstreamBody && typeof body.upstreamBody === 'object') {
+    return body.upstreamBody;
+  }
+
+  return body;
+}
+
 function createNonce() {
   if (typeof globalThis !== 'undefined' && globalThis.crypto?.randomUUID) {
     return globalThis.crypto.randomUUID();
@@ -378,6 +393,13 @@ export default function HomePage() {
   const [submissionError, setSubmissionError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
+  const [aiSchemaDraft, setAiSchemaDraft] = useState(null);
+  const [aiPolicyDraft, setAiPolicyDraft] = useState(null);
+  const [aiApproval, setAiApproval] = useState(null);
+  const [aiError, setAiError] = useState('');
+  const [isGeneratingSchemaDraft, setIsGeneratingSchemaDraft] = useState(false);
+  const [isGeneratingPolicyDraft, setIsGeneratingPolicyDraft] = useState(false);
+  const [isApprovingAiDraft, setIsApprovingAiDraft] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.ethereum || !window.ethereum.on) {
@@ -441,6 +463,312 @@ export default function HomePage() {
   );
 
   const canSubmit = draft.issues.length === 0;
+  const aiSchemaDraftMetadata = aiSchemaDraft?.draft || null;
+  const aiAssistRequired =
+    typeof aiSchemaDraftMetadata?.draftId === 'string' &&
+    aiSchemaDraftMetadata.draftId.length > 0 &&
+    typeof aiSchemaDraftMetadata?.draftHash === 'string' &&
+    aiSchemaDraftMetadata.draftHash.length > 0;
+  const hasAiApproval =
+    aiAssistRequired &&
+    aiApproval?.aiAssist?.source === 'eigen-ai' &&
+    aiApproval.aiAssist.draftId === aiSchemaDraftMetadata.draftId &&
+    aiApproval.aiAssist.draftHash === aiSchemaDraftMetadata.draftHash &&
+    typeof aiApproval.aiAssist.approvalId === 'string' &&
+    aiApproval.aiAssist.approvalId.length > 0;
+  const canApplySchema =
+    canSubmit &&
+    !isSubmitting &&
+    !isApplying &&
+    !isApprovingAiDraft &&
+    (!aiAssistRequired || hasAiApproval);
+
+  async function signPolicyAction({ action, payload, requestIdOverride = null }) {
+    if (typeof window === 'undefined' || !window.ethereum?.request) {
+      throw new Error('Wallet provider is required to sign this request.');
+    }
+
+    const signingWallet = creator.address.trim();
+    const actorWallet = draft.payload.actorWallet;
+    if (!signingWallet || !actorWallet) {
+      throw new Error('Connect creator wallet before signing this action.');
+    }
+
+    if (!draft.payload.tenantId) {
+      throw new Error('tenantId is required before signing this action.');
+    }
+
+    const requestIdForAction = requestIdOverride || draft.payload.requestId;
+    const nonce = createNonce();
+    const signedAt = new Date().toISOString();
+    const signingMessage = buildPolicyMutationMessage({
+      requestId: requestIdForAction,
+      tenantId: draft.payload.tenantId,
+      actorWallet,
+      action,
+      payload,
+      nonce,
+      signedAt
+    });
+
+    let signature;
+    try {
+      signature = await window.ethereum.request({
+        method: 'personal_sign',
+        params: [signingMessage, signingWallet]
+      });
+    } catch {
+      signature = await window.ethereum.request({
+        method: 'personal_sign',
+        params: [signingWallet, signingMessage]
+      });
+    }
+
+    return {
+      actorWallet,
+      requestId: requestIdForAction,
+      auth: {
+        nonce,
+        signedAt,
+        signature
+      }
+    };
+  }
+
+  function applySchemaDraftToBuilder(submissionPayload) {
+    if (!submissionPayload || typeof submissionPayload !== 'object') {
+      return;
+    }
+
+    if (submissionPayload.database && typeof submissionPayload.database === 'object') {
+      if (typeof submissionPayload.database.name === 'string') {
+        setDatabaseName(submissionPayload.database.name);
+      }
+      if (typeof submissionPayload.database.engine === 'string') {
+        const nextEngine = DB_ENGINES.includes(submissionPayload.database.engine)
+          ? submissionPayload.database.engine
+          : 'postgres';
+        setDatabaseEngine(nextEngine);
+      }
+      setDescription(
+        typeof submissionPayload.database.description === 'string'
+          ? submissionPayload.database.description
+          : ''
+      );
+    }
+
+    if (Array.isArray(submissionPayload.tables) && submissionPayload.tables.length > 0) {
+      const nextTables = submissionPayload.tables.map((table, index) => ({
+        id: makeId('table'),
+        name:
+          typeof table?.name === 'string' && table.name.trim().length > 0
+            ? table.name.trim()
+            : `table_${index + 1}`,
+        fields:
+          Array.isArray(table?.fields) && table.fields.length > 0
+            ? table.fields.map((field, fieldIndex) => ({
+                id: makeId('field'),
+                name:
+                  typeof field?.name === 'string' && field.name.trim().length > 0
+                    ? field.name.trim()
+                    : `field_${fieldIndex + 1}`,
+                type: FIELD_TYPES.includes(field?.type) ? field.type : 'text',
+                nullable: Boolean(field?.nullable),
+                primaryKey: Boolean(field?.primaryKey)
+              }))
+            : [createField()],
+        permissionInputs: createPermissionInputs()
+      }));
+      setTables(nextTables);
+    }
+  }
+
+  async function generateAiSchemaDraft() {
+    if (isGeneratingSchemaDraft || isGeneratingPolicyDraft || isApprovingAiDraft) {
+      return;
+    }
+
+    if (!draft.payload.actorWallet) {
+      setAiError('Connect creator wallet before generating an AI draft.');
+      return;
+    }
+
+    if (!draft.payload.tenantId) {
+      setAiError('Tenant ID is required before generating an AI draft.');
+      return;
+    }
+
+    if (!aiPrompt.trim()) {
+      setAiError('Provide an AI Help Prompt before requesting AI draft.');
+      return;
+    }
+
+    setAiError('');
+    setIsGeneratingSchemaDraft(true);
+
+    try {
+      const aiRequestId = makeId('req_ai_schema');
+      const response = await fetch('/api/ai/schema-draft', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          requestId: aiRequestId,
+          tenantId: draft.payload.tenantId,
+          actorWallet: draft.payload.actorWallet,
+          prompt: aiPrompt.trim(),
+          context: {
+            databaseName: databaseName.trim() || 'workspace',
+            engine: databaseEngine,
+            description: description.trim() || null,
+            creatorWallet: draft.payload.actorWallet,
+            chainId: creator.chainId,
+            tableNames: draft.payload.tables
+              .map((table) => table?.name)
+              .filter((name) => typeof name === 'string' && name.trim().length > 0)
+          }
+        })
+      });
+
+      const body = await response.json().catch(() => null);
+      const upstreamBody = unwrapForwardedBody(body);
+      if (!response.ok) {
+        throw new Error(
+          upstreamBody?.message || upstreamBody?.error || body?.message || 'AI schema draft failed.'
+        );
+      }
+
+      setAiSchemaDraft(upstreamBody);
+      setAiApproval(null);
+      applySchemaDraftToBuilder(upstreamBody?.submissionPayload || null);
+    } catch (error) {
+      setAiError(error?.message || 'AI schema draft failed.');
+    } finally {
+      setIsGeneratingSchemaDraft(false);
+    }
+  }
+
+  async function generateAiPolicyDraft() {
+    if (isGeneratingSchemaDraft || isGeneratingPolicyDraft || isApprovingAiDraft) {
+      return;
+    }
+
+    if (!draft.payload.actorWallet) {
+      setAiError('Connect creator wallet before generating an AI draft.');
+      return;
+    }
+
+    if (!draft.payload.tenantId) {
+      setAiError('Tenant ID is required before generating an AI draft.');
+      return;
+    }
+
+    if (!aiPrompt.trim()) {
+      setAiError('Provide an AI Help Prompt before requesting AI draft.');
+      return;
+    }
+
+    setAiError('');
+    setIsGeneratingPolicyDraft(true);
+
+    try {
+      const aiRequestId = makeId('req_ai_policy');
+      const response = await fetch('/api/ai/policy-draft', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          requestId: aiRequestId,
+          tenantId: draft.payload.tenantId,
+          actorWallet: draft.payload.actorWallet,
+          prompt: aiPrompt.trim(),
+          context: {
+            tableNames: draft.payload.tables
+              .map((table) => table?.name)
+              .filter((name) => typeof name === 'string' && name.trim().length > 0)
+          }
+        })
+      });
+
+      const body = await response.json().catch(() => null);
+      const upstreamBody = unwrapForwardedBody(body);
+      if (!response.ok) {
+        throw new Error(
+          upstreamBody?.message || upstreamBody?.error || body?.message || 'AI policy draft failed.'
+        );
+      }
+
+      setAiPolicyDraft(upstreamBody);
+    } catch (error) {
+      setAiError(error?.message || 'AI policy draft failed.');
+    } finally {
+      setIsGeneratingPolicyDraft(false);
+    }
+  }
+
+  async function approveAiSchemaDraft() {
+    if (!aiAssistRequired || !aiSchemaDraftMetadata) {
+      setAiError('Generate an AI schema draft before approval.');
+      return;
+    }
+
+    if (isApprovingAiDraft || isGeneratingSchemaDraft || isGeneratingPolicyDraft) {
+      return;
+    }
+
+    setAiError('');
+    setIsApprovingAiDraft(true);
+
+    try {
+      const approvalRequestId = makeId('req_ai_approve');
+      const signResult = await signPolicyAction({
+        action: 'ai:draft:approve',
+        payload: buildApproveDraftActionPayload({
+          draftId: aiSchemaDraftMetadata.draftId,
+          draftHash: aiSchemaDraftMetadata.draftHash
+        }),
+        requestIdOverride: approvalRequestId
+      });
+
+      const response = await fetch('/api/ai/approve-draft', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          requestId: approvalRequestId,
+          tenantId: draft.payload.tenantId,
+          draftId: aiSchemaDraftMetadata.draftId,
+          draftHash: aiSchemaDraftMetadata.draftHash,
+          actorWallet: signResult.actorWallet,
+          auth: signResult.auth
+        })
+      });
+
+      const body = await response.json().catch(() => null);
+      const upstreamBody = unwrapForwardedBody(body);
+      if (!response.ok) {
+        throw new Error(
+          upstreamBody?.message || upstreamBody?.error || body?.message || 'AI draft approval failed.'
+        );
+      }
+
+      setAiApproval(upstreamBody);
+    } catch (error) {
+      setAiError(error?.message || 'AI draft approval failed.');
+    } finally {
+      setIsApprovingAiDraft(false);
+    }
+  }
+
+  function resetAiAssistState() {
+    setAiSchemaDraft(null);
+    setAiPolicyDraft(null);
+    setAiApproval(null);
+    setAiError('');
+  }
 
   async function connectWallet() {
     if (typeof window === 'undefined' || !window.ethereum || !window.ethereum.request) {
@@ -612,48 +940,30 @@ export default function HomePage() {
     setIsSubmitting(true);
 
     try {
-      if (typeof window === 'undefined' || !window.ethereum?.request) {
-        throw new Error('Wallet provider is required to sign this request.');
-      }
+      const aiAssistMetadata = hasAiApproval
+        ? {
+            source: 'eigen-ai',
+            draftId: aiSchemaDraftMetadata.draftId,
+            draftHash: aiSchemaDraftMetadata.draftHash,
+            approvalId: aiApproval.aiAssist.approvalId,
+            approvedBy: aiApproval.aiAssist.approvedBy
+          }
+        : draft.payload.aiAssist;
 
-      const signingWallet = creator.address.trim();
-      const actorWallet = draft.payload.actorWallet;
-      if (!signingWallet || !actorWallet) {
-        throw new Error('Connect creator wallet before submitting.');
-      }
+      const payloadForSubmit = {
+        ...draft.payload,
+        aiAssist: aiAssistMetadata || null
+      };
 
-      const nonce = createNonce();
-      const signedAt = new Date().toISOString();
-      const signingMessage = buildPolicyMutationMessage({
-        requestId: draft.payload.requestId,
-        tenantId: draft.payload.tenantId,
-        actorWallet,
+      const signResult = await signPolicyAction({
         action: 'schema:submit',
-        payload: buildSubmitActionPayload(draft.payload),
-        nonce,
-        signedAt
+        payload: buildSubmitActionPayload(payloadForSubmit)
       });
 
-      let signature;
-      try {
-        signature = await window.ethereum.request({
-          method: 'personal_sign',
-          params: [signingMessage, signingWallet]
-        });
-      } catch {
-        signature = await window.ethereum.request({
-          method: 'personal_sign',
-          params: [signingWallet, signingMessage]
-        });
-      }
-
       const signedPayload = {
-        ...draft.payload,
-        auth: {
-          nonce,
-          signedAt,
-          signature
-        }
+        ...payloadForSubmit,
+        actorWallet: signResult.actorWallet,
+        auth: signResult.auth
       };
 
       const response = await fetch('/api/control-plane/submit', {
@@ -680,7 +990,7 @@ export default function HomePage() {
   }
 
   async function applyDraft() {
-    if (!canSubmit || isSubmitting || isApplying) {
+    if (!canApplySchema) {
       return;
     }
 
@@ -689,48 +999,34 @@ export default function HomePage() {
     setIsApplying(true);
 
     try {
-      if (typeof window === 'undefined' || !window.ethereum?.request) {
-        throw new Error('Wallet provider is required to sign this request.');
+      if (aiAssistRequired && !hasAiApproval) {
+        throw new Error('Approve the AI schema draft before applying AI-assisted schema changes.');
       }
 
-      const signingWallet = creator.address.trim();
-      const actorWallet = draft.payload.actorWallet;
-      if (!signingWallet || !actorWallet) {
-        throw new Error('Connect creator wallet before applying schema.');
-      }
+      const aiAssistMetadata = aiAssistRequired
+        ? {
+            source: 'eigen-ai',
+            draftId: aiSchemaDraftMetadata.draftId,
+            draftHash: aiSchemaDraftMetadata.draftHash,
+            approvalId: aiApproval.aiAssist.approvalId,
+            approvedBy: aiApproval.aiAssist.approvedBy
+          }
+        : draft.payload.aiAssist;
 
-      const nonce = createNonce();
-      const signedAt = new Date().toISOString();
-      const signingMessage = buildPolicyMutationMessage({
-        requestId: draft.payload.requestId,
-        tenantId: draft.payload.tenantId,
-        actorWallet,
+      const payloadForApply = {
+        ...draft.payload,
+        aiAssist: aiAssistMetadata || null
+      };
+
+      const signResult = await signPolicyAction({
         action: 'schema:apply',
-        payload: buildApplyActionPayload(draft.payload),
-        nonce,
-        signedAt
+        payload: buildApplyActionPayload(payloadForApply)
       });
 
-      let signature;
-      try {
-        signature = await window.ethereum.request({
-          method: 'personal_sign',
-          params: [signingMessage, signingWallet]
-        });
-      } catch {
-        signature = await window.ethereum.request({
-          method: 'personal_sign',
-          params: [signingWallet, signingMessage]
-        });
-      }
-
       const signedPayload = {
-        ...draft.payload,
-        auth: {
-          nonce,
-          signedAt,
-          signature
-        }
+        ...payloadForApply,
+        actorWallet: signResult.actorWallet,
+        auth: signResult.auth
       };
 
       const response = await fetch('/api/control-plane/apply', {
@@ -854,9 +1150,166 @@ export default function HomePage() {
           </label>
         </section>
 
+        <section className="card full-width">
+          <header className="section-row">
+            <h2>3. AI Assist (Draft, Review, Approval)</h2>
+            <div className="inline-row">
+              <button
+                type="button"
+                className="btn btn-muted"
+                onClick={generateAiSchemaDraft}
+                disabled={
+                  isGeneratingSchemaDraft || isGeneratingPolicyDraft || isApprovingAiDraft
+                }
+              >
+                {isGeneratingSchemaDraft ? 'Generating Schema Draft...' : 'Generate Schema Draft'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-muted"
+                onClick={generateAiPolicyDraft}
+                disabled={
+                  isGeneratingSchemaDraft || isGeneratingPolicyDraft || isApprovingAiDraft
+                }
+              >
+                {isGeneratingPolicyDraft ? 'Generating Policy Draft...' : 'Generate Policy Draft'}
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={approveAiSchemaDraft}
+                disabled={
+                  !aiAssistRequired ||
+                  hasAiApproval ||
+                  isApprovingAiDraft ||
+                  isGeneratingSchemaDraft ||
+                  isGeneratingPolicyDraft
+                }
+              >
+                {isApprovingAiDraft ? 'Signing + Approving...' : 'Sign + Approve Schema Draft'}
+              </button>
+              <button type="button" className="btn btn-danger" onClick={resetAiAssistState}>
+                Reset AI State
+              </button>
+            </div>
+          </header>
+
+          <p className="muted">
+            AI mode is approval-gated. If schema draft is active, schema apply requires completed
+            approval metadata from AI draft approval.
+          </p>
+
+          {aiAssistRequired ? (
+            hasAiApproval ? (
+              <p className="ok-text">
+                AI schema draft approved and ready for apply.
+              </p>
+            ) : (
+              <p className="error-text">
+                AI schema draft exists but is not approved yet. Apply is blocked until approval.
+              </p>
+            )
+          ) : (
+            <p className="muted">No AI schema draft is currently active.</p>
+          )}
+
+          {aiError ? <p className="error-text">{aiError}</p> : null}
+
+          {aiSchemaDraft ? (
+            <div className="result-box">
+              <h3>Schema Draft Metadata</h3>
+              <div className="meta-grid">
+                <p>
+                  <span>Draft ID</span>
+                  <strong>{aiSchemaDraft?.draft?.draftId || 'N/A'}</strong>
+                </p>
+                <p>
+                  <span>Draft Hash</span>
+                  <strong>{aiSchemaDraft?.draft?.draftHash || 'N/A'}</strong>
+                </p>
+                <p>
+                  <span>Plan Hash</span>
+                  <strong>{aiSchemaDraft?.migrationPlan?.planHash || 'N/A'}</strong>
+                </p>
+                <p>
+                  <span>Signer</span>
+                  <strong>{aiSchemaDraft?.draft?.signerAddress || 'N/A'}</strong>
+                </p>
+                <p>
+                  <span>Verified</span>
+                  <strong>{String(Boolean(aiSchemaDraft?.draft?.verification?.verified))}</strong>
+                </p>
+                <p>
+                  <span>Approval Required</span>
+                  <strong>{String(Boolean(aiSchemaDraft?.approval?.required))}</strong>
+                </p>
+              </div>
+              <pre>{JSON.stringify(aiSchemaDraft, null, 2)}</pre>
+            </div>
+          ) : null}
+
+          {aiPolicyDraft ? (
+            <div className="result-box">
+              <h3>Policy Draft Metadata</h3>
+              <div className="meta-grid">
+                <p>
+                  <span>Draft ID</span>
+                  <strong>{aiPolicyDraft?.draft?.draftId || 'N/A'}</strong>
+                </p>
+                <p>
+                  <span>Draft Hash</span>
+                  <strong>{aiPolicyDraft?.draft?.draftHash || 'N/A'}</strong>
+                </p>
+                <p>
+                  <span>Signer</span>
+                  <strong>{aiPolicyDraft?.draft?.signerAddress || 'N/A'}</strong>
+                </p>
+                <p>
+                  <span>Verified</span>
+                  <strong>{String(Boolean(aiPolicyDraft?.draft?.verification?.verified))}</strong>
+                </p>
+                <p>
+                  <span>Generated Grants</span>
+                  <strong>{Array.isArray(aiPolicyDraft?.grants) ? aiPolicyDraft.grants.length : 0}</strong>
+                </p>
+              </div>
+              <pre>{JSON.stringify(aiPolicyDraft, null, 2)}</pre>
+            </div>
+          ) : null}
+
+          {aiApproval ? (
+            <div className="result-box">
+              <h3>Approval Status</h3>
+              <div className="meta-grid">
+                <p>
+                  <span>Approval ID</span>
+                  <strong>{aiApproval?.aiAssist?.approvalId || aiApproval?.approval?.approvalId || 'N/A'}</strong>
+                </p>
+                <p>
+                  <span>Approved By</span>
+                  <strong>{aiApproval?.aiAssist?.approvedBy || aiApproval?.approval?.approvedBy || 'N/A'}</strong>
+                </p>
+                <p>
+                  <span>Decision</span>
+                  <strong>{aiApproval?.decision?.outcome || 'N/A'}</strong>
+                </p>
+                <p>
+                  <span>Audit Logged</span>
+                  <strong>{String(Boolean(aiApproval?.audit?.logged))}</strong>
+                </p>
+                <p>
+                  <span>Receipt ID</span>
+                  <strong>{aiApproval?.receipt?.receiptId || 'N/A'}</strong>
+                </p>
+              </div>
+              <pre>{JSON.stringify(aiApproval, null, 2)}</pre>
+            </div>
+          ) : null}
+        </section>
+
         <section className="card">
           <header className="section-row">
-            <h2>3. Universal DB Wallet List</h2>
+            <h2>4. Universal DB Wallet List</h2>
             <button type="button" className="btn btn-muted" onClick={addUniversalWalletRow}>
               Add Wallet
             </button>
@@ -896,7 +1349,7 @@ export default function HomePage() {
 
         <section className="card">
           <header>
-            <h2>4. Database Permission Matrix</h2>
+            <h2>5. Database Permission Matrix</h2>
             <p className="muted">Add one or multiple addresses per operation (comma or whitespace separated).</p>
           </header>
           <div className="stack-sm">
@@ -915,7 +1368,7 @@ export default function HomePage() {
 
         <section className="card full-width">
           <header className="section-row">
-            <h2>5. Tables, Fields, and Table-Level Permissions</h2>
+            <h2>6. Tables, Fields, and Table-Level Permissions</h2>
             <button type="button" className="btn" onClick={addTable}>
               Add Table
             </button>
@@ -1033,7 +1486,7 @@ export default function HomePage() {
 
         <section className="card full-width">
           <header className="section-row">
-            <h2>6. Request Preview and Submit</h2>
+            <h2>7. Request Preview and Submit</h2>
             <div className="inline-row">
               <button
                 type="submit"
@@ -1047,7 +1500,12 @@ export default function HomePage() {
                 type="button"
                 className="btn btn-muted"
                 onClick={applyDraft}
-                disabled={!canSubmit || isSubmitting || isApplying}
+                disabled={!canApplySchema}
+                title={
+                  aiAssistRequired && !hasAiApproval
+                    ? 'Approve AI schema draft before apply.'
+                    : 'Apply schema payload'
+                }
               >
                 {isApplying ? 'Signing + Applying...' : 'Sign + Apply Schema'}
               </button>
