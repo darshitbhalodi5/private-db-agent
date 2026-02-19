@@ -32,9 +32,26 @@ CREATE TABLE IF NOT EXISTS access_log (
   created_at TIMESTAMPTZ NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS policy_grants (
+  grant_id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  wallet_address TEXT NOT NULL,
+  scope_type TEXT NOT NULL,
+  scope_id TEXT NOT NULL,
+  operation TEXT NOT NULL,
+  effect TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  signature_hash TEXT NOT NULL,
+  revoked_at TEXT,
+  revoked_by TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_access_log_created_at ON access_log (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_wallet_balances_wallet_chain ON wallet_balances (wallet_address, chain_id);
 CREATE INDEX IF NOT EXISTS idx_wallet_tx_wallet_chain ON wallet_transactions (wallet_address, chain_id);
+CREATE INDEX IF NOT EXISTS idx_policy_grants_lookup
+ON policy_grants (tenant_id, wallet_address, scope_type, scope_id, operation, effect);
 
 INSERT INTO wallet_balances (wallet_address, chain_id, asset_symbol, balance, updated_at)
 VALUES
@@ -60,3 +77,42 @@ VALUES
   ('seed-allow-1', '0x8ba1f109551bd432803012645ac136ddd64dba72', 'balances:read', 'wallet_balances', 'allow', NOW()),
   ('seed-deny-1', '0x8ba1f109551bd432803012645ac136ddd64dba72', 'balances:read', 'access_log_insert', 'deny', NOW() - INTERVAL '1 hour')
 ON CONFLICT DO NOTHING;
+
+INSERT INTO policy_grants (
+  grant_id,
+  tenant_id,
+  wallet_address,
+  scope_type,
+  scope_id,
+  operation,
+  effect,
+  created_by,
+  created_at,
+  signature_hash
+)
+VALUES
+  (
+    'seed_grant_demo_db_all_allow',
+    'tenant_demo',
+    '0x8ba1f109551bd432803012645ac136ddd64dba72',
+    'database',
+    '*',
+    'all',
+    'allow',
+    '0x8ba1f109551bd432803012645ac136ddd64dba72',
+    NOW()::TEXT,
+    'seeded-bootstrap-grant'
+  ),
+  (
+    'seed_grant_demo_signer_db_all_allow',
+    'tenant_demo',
+    '0xde56dc445701476f3aff564c4c41dbf182057165',
+    'database',
+    '*',
+    'all',
+    'allow',
+    '0xde56dc445701476f3aff564c4c41dbf182057165',
+    NOW()::TEXT,
+    'seeded-demo-signer-bootstrap-grant'
+  )
+ON CONFLICT (grant_id) DO NOTHING;
