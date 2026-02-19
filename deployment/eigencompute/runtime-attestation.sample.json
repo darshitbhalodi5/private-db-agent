@@ -1,10 +1,10 @@
 {
   "attestation": {
-    "appId": "private-db-agent-demo",
-    "imageDigest": "sha256:replace-with-production-image-digest",
-    "attestationReportHash": "sha256:replace-with-attestation-report-hash",
-    "onchainDeploymentTxHash": "0xreplace_with_onchain_deployment_tx_hash",
-    "issuedAt": "2026-02-18T00:00:00.000Z",
-    "expiresAt": "2026-02-18T00:15:00.000Z"
+    "appId": "private-db-agent-demo-2026",
+    "imageDigest": "sha256:82ed5c34d8b572612b2199932cd260ec619e1887eeb6a2a86f759ae4d77c6626",
+    "attestationReportHash": "sha256:cd5ad13ce0bc8f8f5b2f33f4c26d1f27818054e42d66ca4a65153cdccaccb765",
+    "onchainDeploymentTxHash": "0x71a8f3e2bf89af9f9819cc84d552197f0d0ff0f3a37f8b0cef18a1dfe0f9b123",
+    "issuedAt": "2026-02-19T00:00:00.000Z",
+    "expiresAt": "2026-02-19T00:15:00.000Z"
   }
 }

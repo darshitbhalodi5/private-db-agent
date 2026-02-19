@@ -7,9 +7,9 @@ metadata:
 spec:
   runtime:
     type: eigencompute
-    appId: private-db-agent-demo
-    image: ghcr.io/your-org/private-db-agent:latest
-    imageDigest: sha256:replace-with-production-image-digest
+    appId: private-db-agent-demo-2026
+    image: ghcr.io/darshitbhalodi5/private-db-agent:demo-2026-02-19
+    imageDigest: sha256:82ed5c34d8b572612b2199932cd260ec619e1887eeb6a2a86f759ae4d77c6626
   service:
     port: 8080
     healthPath: /health

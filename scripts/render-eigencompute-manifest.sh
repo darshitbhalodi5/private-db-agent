@@ -3,10 +3,25 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-IMAGE_REF="${1:-ghcr.io/your-org/private-db-agent:latest}"
-IMAGE_DIGEST="${2:-sha256:replace-with-production-image-digest}"
-APP_ID="${3:-private-db-agent-demo}"
+IMAGE_REF="${1:-ghcr.io/darshitbhalodi5/private-db-agent:demo-2026-02-19}"
+IMAGE_DIGEST="${2:-sha256:82ed5c34d8b572612b2199932cd260ec619e1887eeb6a2a86f759ae4d77c6626}"
+APP_ID="${3:-private-db-agent-demo-2026}"
 OUTPUT_PATH="${4:-$ROOT_DIR/deployment/eigencompute/generated-agent-manifest.yaml}"
+
+if [[ "$IMAGE_REF" == *"your-org"* ]]; then
+  echo "IMAGE_REF must be a concrete registry path, not a placeholder." >&2
+  exit 1
+fi
+
+if [[ "$IMAGE_DIGEST" == *"replace-with"* ]]; then
+  echo "IMAGE_DIGEST must be a concrete digest, not a placeholder." >&2
+  exit 1
+fi
+
+if [[ "$APP_ID" == *"replace-with"* ]]; then
+  echo "APP_ID must be a concrete deployment app ID, not a placeholder." >&2
+  exit 1
+fi
 
 cat >"$OUTPUT_PATH" <<EOF
 apiVersion: eigencloud/v1alpha1
