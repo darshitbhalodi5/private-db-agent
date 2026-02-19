@@ -196,6 +196,346 @@ function createDefaultPolicyDraft({ prompt, tableNames = [], actorWallet }) {
   return grants;
 }
 
+function safeResponseError(statusCode, error, message, details = null) {
+  return {
+    statusCode,
+    body: {
+      error,
+      message,
+      ...(details ? { details } : {})
+    }
+  };
+}
+
+function normalizeRequestHeaders(rawHeaders) {
+  if (!isObject(rawHeaders)) {
+    return {};
+  }
+
+  const normalized = {};
+  for (const [headerName, headerValue] of Object.entries(rawHeaders)) {
+    if (!isNonEmptyString(headerName)) {
+      continue;
+    }
+    if (headerValue === null || headerValue === undefined) {
+      continue;
+    }
+    normalized[headerName.trim()] = String(headerValue);
+  }
+
+  return normalized;
+}
+
+function resolveProviderEndpoint(baseUrl, endpointPath) {
+  if (!isNonEmptyString(baseUrl)) {
+    return null;
+  }
+
+  const normalizedPath = isNonEmptyString(endpointPath) ? endpointPath.trim() : '/';
+  try {
+    return new URL(normalizedPath, baseUrl.trim()).toString();
+  } catch {
+    return null;
+  }
+}
+
+function extractProviderDraft(responseBody) {
+  const candidates = [
+    responseBody?.draft,
+    responseBody?.result,
+    responseBody?.output,
+    responseBody?.data,
+    responseBody
+  ];
+
+  for (const candidate of candidates) {
+    if (isObject(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function normalizeProviderSchemaSubmissionPayload({
+  payload,
+  tenantId,
+  actorWallet,
+  requestId,
+  providerDraft
+}) {
+  const context = isObject(payload?.context) ? payload.context : {};
+  const databaseName = normalizeIdentifier(context.databaseName, 'workspace');
+  const databaseEngine =
+    context.engine === 'postgres' || context.engine === 'sqlite' ? context.engine : 'sqlite';
+  const creatorWallet = normalizeWalletAddress(context.creatorWallet) || actorWallet;
+  const chainId =
+    typeof context.chainId === 'number' && Number.isInteger(context.chainId) ? context.chainId : null;
+  const description = isNonEmptyString(context.description) ? context.description.trim() : null;
+
+  const providerSubmission = isObject(providerDraft?.submissionPayload)
+    ? providerDraft.submissionPayload
+    : null;
+  const providerTables = Array.isArray(providerSubmission?.tables)
+    ? providerSubmission.tables
+    : Array.isArray(providerDraft?.tables)
+      ? providerDraft.tables
+      : null;
+
+  if (!Array.isArray(providerTables) || providerTables.length === 0) {
+    return {
+      ok: false,
+      error: safeResponseError(
+        422,
+        'AI_PROVIDER_RESPONSE_INVALID',
+        'Eigen AI schema draft response did not include tables.',
+        {
+          expected: 'submissionPayload.tables or tables[]'
+        }
+      )
+    };
+  }
+
+  const providerDatabase = isObject(providerSubmission?.database)
+    ? providerSubmission.database
+    : isObject(providerDraft?.database)
+      ? providerDraft.database
+      : {};
+  const providerCreator = isObject(providerSubmission?.creator)
+    ? providerSubmission.creator
+    : isObject(providerDraft?.creator)
+      ? providerDraft.creator
+      : {};
+  const providerGrants = Array.isArray(providerSubmission?.grants)
+    ? providerSubmission.grants
+    : Array.isArray(providerDraft?.grants)
+      ? providerDraft.grants
+      : [];
+
+  return {
+    ok: true,
+    value: {
+      tenantId,
+      requestId,
+      actorWallet,
+      creator: {
+        walletAddress: normalizeWalletAddress(providerCreator.walletAddress) || creatorWallet,
+        chainId:
+          typeof providerCreator.chainId === 'number' && Number.isInteger(providerCreator.chainId)
+            ? providerCreator.chainId
+            : chainId
+      },
+      database: {
+        name: normalizeIdentifier(providerDatabase.name, databaseName),
+        engine:
+          providerDatabase.engine === 'postgres' || providerDatabase.engine === 'sqlite'
+            ? providerDatabase.engine
+            : databaseEngine,
+        description: isNonEmptyString(providerDatabase.description)
+          ? providerDatabase.description.trim()
+          : description
+      },
+      tables: providerTables,
+      grants: providerGrants
+    }
+  };
+}
+
+function normalizeProviderPolicyGrants(providerDraft) {
+  if (Array.isArray(providerDraft?.grants)) {
+    return providerDraft.grants;
+  }
+
+  if (Array.isArray(providerDraft?.policy?.grants)) {
+    return providerDraft.policy.grants;
+  }
+
+  return null;
+}
+
+async function parseProviderResponseBody(response) {
+  const raw = await response.text();
+  if (!raw) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {
+      raw
+    };
+  }
+}
+
+function buildProviderHeaders(aiConfig) {
+  const requestHeaders = normalizeRequestHeaders(aiConfig.requestHeaders);
+  const headers = {
+    accept: 'application/json',
+    'content-type': 'application/json',
+    ...requestHeaders
+  };
+
+  if (isNonEmptyString(aiConfig.apiKey)) {
+    headers.authorization = `Bearer ${aiConfig.apiKey.trim()}`;
+  }
+
+  return headers;
+}
+
+function buildProviderRequestPayload({
+  draftType,
+  requestId,
+  tenantId,
+  actorWallet,
+  prompt,
+  context,
+  model
+}) {
+  return {
+    requestId,
+    draftType,
+    tenantId,
+    actorWallet,
+    prompt,
+    context: isObject(context) ? context : {},
+    model
+  };
+}
+
+async function requestProviderDraft({
+  aiConfig,
+  draftType,
+  requestId,
+  tenantId,
+  actorWallet,
+  prompt,
+  context,
+  fetchImpl
+}) {
+  if (aiConfig.provider !== 'eigen') {
+    return {
+      ok: false,
+      error: safeResponseError(500, 'AI_PROVIDER_UNSUPPORTED', `Unsupported AI provider '${aiConfig.provider}'.`)
+    };
+  }
+
+  if (typeof fetchImpl !== 'function') {
+    return {
+      ok: false,
+      error: safeResponseError(503, 'AI_PROVIDER_UNAVAILABLE', 'Fetch implementation is not available.')
+    };
+  }
+
+  if (!isNonEmptyString(aiConfig.apiKey)) {
+    return {
+      ok: false,
+      error: safeResponseError(503, 'AI_PROVIDER_NOT_CONFIGURED', 'AI_API_KEY is required for AI_PROVIDER=eigen.')
+    };
+  }
+
+  const endpoint = resolveProviderEndpoint(
+    aiConfig.baseUrl,
+    draftType === 'schema' ? aiConfig.schemaDraftPath : aiConfig.policyDraftPath
+  );
+  if (!endpoint) {
+    return {
+      ok: false,
+      error: safeResponseError(
+        503,
+        'AI_PROVIDER_NOT_CONFIGURED',
+        `Invalid provider endpoint for ${draftType} draft. Configure AI_BASE_URL and path envs.`
+      )
+    };
+  }
+
+  const headers = buildProviderHeaders(aiConfig);
+  const requestPayload = buildProviderRequestPayload({
+    draftType,
+    requestId,
+    tenantId,
+    actorWallet,
+    prompt,
+    context,
+    model: aiConfig.model
+  });
+  const timeoutMs =
+    Number.isInteger(aiConfig.requestTimeoutMs) && aiConfig.requestTimeoutMs > 0
+      ? aiConfig.requestTimeoutMs
+      : 15000;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
+  let response;
+  try {
+    response = await fetchImpl(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(requestPayload),
+      signal: controller.signal
+    });
+  } catch (error) {
+    clearTimeout(timer);
+    if (error?.name === 'AbortError') {
+      return {
+        ok: false,
+        error: safeResponseError(504, 'AI_PROVIDER_TIMEOUT', `Eigen AI request timed out after ${timeoutMs}ms.`)
+      };
+    }
+
+    return {
+      ok: false,
+      error: safeResponseError(
+        503,
+        'AI_PROVIDER_UNREACHABLE',
+        error?.message || 'Failed to reach Eigen AI provider.'
+      )
+    };
+  }
+  clearTimeout(timer);
+
+  const responseBody = await parseProviderResponseBody(response);
+  if (!response.ok) {
+    return {
+      ok: false,
+      error: safeResponseError(
+        502,
+        'AI_PROVIDER_HTTP_ERROR',
+        `Eigen AI provider responded with HTTP ${response.status}.`,
+        {
+          providerStatus: response.status,
+          providerBody:
+            isObject(responseBody) && typeof responseBody.raw === 'undefined' ? responseBody : null
+        }
+      )
+    };
+  }
+
+  const draft = extractProviderDraft(responseBody);
+  if (!draft) {
+    return {
+      ok: false,
+      error: safeResponseError(
+        502,
+        'AI_PROVIDER_RESPONSE_INVALID',
+        'Eigen AI response body is not a valid JSON object.'
+      )
+    };
+  }
+
+  return {
+    ok: true,
+    draft,
+    metadata: {
+      endpoint,
+      providerStatus: response.status
+    }
+  };
+}
+
 function validatePolicyGrants(grants) {
   if (!Array.isArray(grants) || grants.length === 0) {
     return {
@@ -293,7 +633,8 @@ export function createEigenAiService({
   aiConfig,
   aiDraftStore,
   mutationAuthService,
-  now = () => new Date().toISOString()
+  now = () => new Date().toISOString(),
+  fetchImpl = globalThis.fetch
 }) {
   if (!aiDraftStore) {
     throw new Error('aiDraftStore is required.');
@@ -330,29 +671,60 @@ export function createEigenAiService({
     }
 
     const context = isObject(payload.context) ? payload.context : {};
-    const databaseName = normalizeIdentifier(context.databaseName, 'workspace');
-    const databaseEngine =
-      context.engine === 'postgres' || context.engine === 'sqlite' ? context.engine : 'sqlite';
+    let submissionPayload;
+    let providerMetadata = null;
+    if (aiConfig.provider === 'eigen') {
+      const providerResponse = await requestProviderDraft({
+        aiConfig,
+        draftType: 'schema',
+        requestId,
+        tenantId,
+        actorWallet,
+        prompt,
+        context,
+        fetchImpl
+      });
+      if (!providerResponse.ok) {
+        return providerResponse.error;
+      }
 
-    const submissionPayload = {
-      tenantId,
-      requestId,
-      actorWallet,
-      creator: {
-        walletAddress: normalizeWalletAddress(context.creatorWallet) || actorWallet,
-        chainId:
-          typeof context.chainId === 'number' && Number.isInteger(context.chainId)
-            ? context.chainId
-            : null
-      },
-      database: {
-        name: databaseName,
-        engine: databaseEngine,
-        description: isNonEmptyString(context.description) ? context.description.trim() : null
-      },
-      tables: createDefaultTableDraft(prompt, { databaseName }),
-      grants: []
-    };
+      const normalizedSubmission = normalizeProviderSchemaSubmissionPayload({
+        payload,
+        tenantId,
+        actorWallet,
+        requestId,
+        providerDraft: providerResponse.draft
+      });
+      if (!normalizedSubmission.ok) {
+        return normalizedSubmission.error;
+      }
+
+      submissionPayload = normalizedSubmission.value;
+      providerMetadata = providerResponse.metadata;
+    } else {
+      const databaseName = normalizeIdentifier(context.databaseName, 'workspace');
+      const databaseEngine =
+        context.engine === 'postgres' || context.engine === 'sqlite' ? context.engine : 'sqlite';
+      submissionPayload = {
+        tenantId,
+        requestId,
+        actorWallet,
+        creator: {
+          walletAddress: normalizeWalletAddress(context.creatorWallet) || actorWallet,
+          chainId:
+            typeof context.chainId === 'number' && Number.isInteger(context.chainId)
+              ? context.chainId
+              : null
+        },
+        database: {
+          name: databaseName,
+          engine: databaseEngine,
+          description: isNonEmptyString(context.description) ? context.description.trim() : null
+        },
+        tables: createDefaultTableDraft(prompt, { databaseName }),
+        grants: []
+      };
+    }
 
     const schemaDslResult = validateAndCompileSchemaDsl(submissionPayload);
     if (!schemaDslResult.ok) {
@@ -376,7 +748,8 @@ export function createEigenAiService({
       migrationPlan: schemaDslResult.migrationPlan,
       provider: aiConfig.provider,
       model: aiConfig.model,
-      issuedAt
+      issuedAt,
+      providerMetadata
     };
 
     const signatureResult = await signAndVerifyDraftEnvelope({
@@ -420,7 +793,8 @@ export function createEigenAiService({
           signerAddress: signatureResult.signerAddress,
           signature: signatureResult.signature,
           verification: signatureResult.verification,
-          planHash: schemaDslResult.migrationPlan.planHash
+          planHash: schemaDslResult.migrationPlan.planHash,
+          providerMetadata
         },
         submissionPayload,
         migrationPlan: schemaDslResult.migrationPlan,
@@ -463,12 +837,42 @@ export function createEigenAiService({
           .map((tableName) => normalizeIdentifier(tableName, ''))
           .filter((tableName) => isNonEmptyString(tableName))
       : [];
+    let grants;
+    let providerMetadata = null;
+    if (aiConfig.provider === 'eigen') {
+      const providerResponse = await requestProviderDraft({
+        aiConfig,
+        draftType: 'policy',
+        requestId,
+        tenantId,
+        actorWallet,
+        prompt,
+        context: payload?.context,
+        fetchImpl
+      });
+      if (!providerResponse.ok) {
+        return providerResponse.error;
+      }
 
-    const grants = createDefaultPolicyDraft({
-      prompt,
-      tableNames,
-      actorWallet
-    });
+      grants = normalizeProviderPolicyGrants(providerResponse.draft);
+      providerMetadata = providerResponse.metadata;
+      if (!Array.isArray(grants) || grants.length === 0) {
+        return safeResponseError(
+          422,
+          'AI_PROVIDER_RESPONSE_INVALID',
+          'Eigen AI policy draft response did not include grants.',
+          {
+            expected: 'grants[]'
+          }
+        );
+      }
+    } else {
+      grants = createDefaultPolicyDraft({
+        prompt,
+        tableNames,
+        actorWallet
+      });
+    }
 
     const grantValidation = validatePolicyGrants(grants);
     if (!grantValidation.ok) {
@@ -494,7 +898,8 @@ export function createEigenAiService({
       grants: grantValidation.normalized,
       provider: aiConfig.provider,
       model: aiConfig.model,
-      issuedAt
+      issuedAt,
+      providerMetadata
     };
 
     const signatureResult = await signAndVerifyDraftEnvelope({
@@ -537,7 +942,8 @@ export function createEigenAiService({
           model: aiConfig.model,
           signerAddress: signatureResult.signerAddress,
           signature: signatureResult.signature,
-          verification: signatureResult.verification
+          verification: signatureResult.verification,
+          providerMetadata
         },
         grants: grantValidation.normalized,
         approval: {

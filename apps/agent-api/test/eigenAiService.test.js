@@ -53,6 +53,52 @@ async function withAiService(testFn) {
   }
 }
 
+async function withConfigurableAiService(testFn, { aiConfigOverrides = {}, fetchImpl = undefined } = {}) {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'private-db-agent-ai-provider-'));
+  const dbPath = path.join(tempDir, 'ai-provider.sqlite');
+  const adapter = await createSqliteAdapter({ filePath: dbPath });
+  const aiDraftStore = createAiDraftStore({ databaseAdapter: adapter });
+  await aiDraftStore.ensureInitialized();
+
+  const aiSignerWallet = Wallet.createRandom();
+  const mutationAuthService = createPolicyMutationAuthService(
+    {
+      enabled: true,
+      nonceTtlSeconds: 300,
+      maxFutureSkewSeconds: 60
+    },
+    { now: () => fixedNowMs }
+  );
+
+  const eigenAiService = createEigenAiService({
+    aiConfig: {
+      enabled: true,
+      provider: 'eigen',
+      model: 'eigen-ai-prod-model',
+      baseUrl: 'https://api.eigenai.test',
+      apiKey: 'test-eigen-ai-key',
+      requestTimeoutMs: 1000,
+      schemaDraftPath: '/v1/schema-draft',
+      policyDraftPath: '/v1/policy-draft',
+      requestHeaders: {},
+      signerPrivateKey: aiSignerWallet.privateKey,
+      signerAddress: aiSignerWallet.address,
+      ...aiConfigOverrides
+    },
+    aiDraftStore,
+    mutationAuthService,
+    now: () => fixedIsoTime,
+    fetchImpl
+  });
+
+  try {
+    await testFn({ eigenAiService });
+  } finally {
+    await adapter.close();
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+}
+
 test('schema draft endpoint returns verified signed draft with compiled plan', async () => {
   await withAiService(async ({ eigenAiService }) => {
     const actorWallet = Wallet.createRandom();
@@ -163,4 +209,143 @@ test('draft approval requires valid signed actor auth and rejects hash mismatch'
     assert.equal(approvalResult.body.code, 'AI_DRAFT_APPROVED');
     assert.equal(approvalResult.body.aiAssist.source, 'eigen-ai');
   });
+});
+
+test('schema draft calls eigen provider and returns validated signed result', async () => {
+  await withConfigurableAiService(
+    async ({ eigenAiService }) => {
+      const actorWallet = Wallet.createRandom();
+
+      const result = await eigenAiService.createSchemaDraft({
+        requestId: 'req_ai_eigen_schema_1',
+        tenantId: 'tenant_demo',
+        actorWallet: actorWallet.address,
+        prompt: 'Create inventory schema',
+        context: {
+          databaseName: 'branch_ledger',
+          engine: 'sqlite',
+          creatorWallet: actorWallet.address
+        }
+      });
+
+      assert.equal(result.statusCode, 200);
+      assert.equal(result.body.code, 'AI_SCHEMA_DRAFT_READY');
+      assert.equal(result.body.draft.provider, 'eigen');
+      assert.equal(result.body.draft.providerMetadata.endpoint, 'https://api.eigenai.test/v1/schema-draft');
+      assert.equal(result.body.draft.verification.verified, true);
+    },
+    {
+      fetchImpl: async (url) =>
+        new Response(
+          JSON.stringify({
+            draft: {
+              submissionPayload: {
+                database: {
+                  name: 'branch_ledger',
+                  engine: 'sqlite'
+                },
+                tables: [
+                  {
+                    name: 'inventory',
+                    fields: [
+                      { name: 'item_id', type: 'text', primaryKey: true, nullable: false },
+                      { name: 'quantity', type: 'integer', nullable: false }
+                    ]
+                  }
+                ],
+                grants: []
+              }
+            }
+          }),
+          {
+            status: 200,
+            headers: {
+              'content-type': 'application/json'
+            }
+          }
+        )
+    }
+  );
+});
+
+test('policy draft calls eigen provider and validates grants', async () => {
+  await withConfigurableAiService(
+    async ({ eigenAiService }) => {
+      const actorWallet = Wallet.createRandom();
+
+      const result = await eigenAiService.createPolicyDraft({
+        requestId: 'req_ai_eigen_policy_1',
+        tenantId: 'tenant_demo',
+        actorWallet: actorWallet.address,
+        prompt: 'Grant read access',
+        context: {
+          tableNames: ['inventory']
+        }
+      });
+
+      assert.equal(result.statusCode, 200);
+      assert.equal(result.body.code, 'AI_POLICY_DRAFT_READY');
+      assert.equal(result.body.draft.provider, 'eigen');
+      assert.equal(result.body.grants.length, 1);
+      assert.equal(result.body.draft.verification.verified, true);
+    },
+    {
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            grants: [
+              {
+                walletAddress: '0x0000000000000000000000000000000000001234',
+                scopeType: 'database',
+                scopeId: '*',
+                operation: 'read',
+                effect: 'allow'
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: {
+              'content-type': 'application/json'
+            }
+          }
+        )
+    }
+  );
+});
+
+test('eigen provider errors are mapped to deterministic service errors', async () => {
+  await withConfigurableAiService(
+    async ({ eigenAiService }) => {
+      const actorWallet = Wallet.createRandom();
+
+      const result = await eigenAiService.createSchemaDraft({
+        requestId: 'req_ai_eigen_error_1',
+        tenantId: 'tenant_demo',
+        actorWallet: actorWallet.address,
+        prompt: 'Create schema',
+        context: {
+          databaseName: 'branch_ledger'
+        }
+      });
+
+      assert.equal(result.statusCode, 502);
+      assert.equal(result.body.error, 'AI_PROVIDER_HTTP_ERROR');
+      assert.equal(result.body.details.providerStatus, 500);
+    },
+    {
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            error: 'upstream failed'
+          }),
+          {
+            status: 500,
+            headers: {
+              'content-type': 'application/json'
+            }
+          }
+        )
+    }
+  );
 });
