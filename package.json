@@ -18,6 +18,7 @@
     "demo:smoke": "node scripts/demo-smoke.mjs http://localhost:8080",
     "demo:submission-smoke": "node scripts/submission-smoke.mjs http://localhost:8080",
     "eigen:manifest": "bash scripts/render-eigencompute-manifest.sh",
+    "eigen:evidence": "node scripts/collect-runtime-evidence.mjs http://localhost:8080",
     "docker:up": "docker compose up -d --build",
     "docker:down": "docker compose down -v"
   },
