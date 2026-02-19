@@ -91,9 +91,17 @@ async function buildSignedPayload(basePayload, signerWallet) {
   };
 }
 
-function createAllowPayload({ requester, targetWalletAddress, chainId, nowIso, nowMs }) {
+function createAllowPayload({
+  tenantId,
+  requester,
+  targetWalletAddress,
+  chainId,
+  nowIso,
+  nowMs
+}) {
   return {
     requestId: createRequestId('allow-balance-read', nowMs),
+    tenantId,
     requester,
     capability: 'balances:read',
     queryTemplate: 'wallet_balances',
@@ -109,9 +117,10 @@ function createAllowPayload({ requester, targetWalletAddress, chainId, nowIso, n
   };
 }
 
-function createPolicyDenyPayload({ requester, targetWalletAddress, nowIso, nowMs }) {
+function createPolicyDenyPayload({ tenantId, requester, targetWalletAddress, nowIso, nowMs }) {
   return {
     requestId: createRequestId('deny-policy-write-attempt', nowMs),
+    tenantId,
     requester,
     capability: 'balances:read',
     queryTemplate: 'access_log_insert',
@@ -130,9 +139,17 @@ function createPolicyDenyPayload({ requester, targetWalletAddress, nowIso, nowMs
   };
 }
 
-function createAuthDenyPayload({ requester, targetWalletAddress, chainId, nowIso, nowMs }) {
+function createAuthDenyPayload({
+  tenantId,
+  requester,
+  targetWalletAddress,
+  chainId,
+  nowIso,
+  nowMs
+}) {
   return {
     requestId: createRequestId('deny-auth-signer-mismatch', nowMs),
+    tenantId,
     requester,
     capability: 'balances:read',
     queryTemplate: 'wallet_balances',
@@ -150,9 +167,14 @@ function createAuthDenyPayload({ requester, targetWalletAddress, chainId, nowIso
 
 export function createDemoScenarioService(demoConfig, { now = () => new Date() } = {}) {
   const defaultTargetWallet = '0x8ba1f109551bd432803012645ac136ddd64dba72';
+  const defaultTenantId = 'tenant_demo';
 
   const config = {
     enabled: demoConfig?.enabled !== undefined ? Boolean(demoConfig.enabled) : true,
+    tenantId:
+      typeof demoConfig?.tenantId === 'string' && demoConfig.tenantId.trim().length > 0
+        ? demoConfig.tenantId.trim().toLowerCase()
+        : defaultTenantId,
     targetWalletAddress: normalizeAddress(
       demoConfig?.targetWalletAddress || defaultTargetWallet
     ),
@@ -194,6 +216,7 @@ export function createDemoScenarioService(demoConfig, { now = () => new Date() }
 
     if (scenario.id === 'allow-balance-read') {
       const payload = createAllowPayload({
+        tenantId: config.tenantId,
         requester,
         targetWalletAddress: config.targetWalletAddress,
         chainId: config.defaultChainId,
@@ -210,6 +233,7 @@ export function createDemoScenarioService(demoConfig, { now = () => new Date() }
 
     if (scenario.id === 'deny-policy-write-attempt') {
       const payload = createPolicyDenyPayload({
+        tenantId: config.tenantId,
         requester,
         targetWalletAddress: config.targetWalletAddress,
         nowIso,
@@ -225,6 +249,7 @@ export function createDemoScenarioService(demoConfig, { now = () => new Date() }
 
     if (scenario.id === 'deny-auth-signer-mismatch') {
       const payload = createAuthDenyPayload({
+        tenantId: config.tenantId,
         requester,
         targetWalletAddress: config.targetWalletAddress,
         chainId: config.defaultChainId,

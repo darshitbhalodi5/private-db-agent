@@ -54,6 +54,7 @@ services:
       PROOF_ONCHAIN_DEPLOYMENT_TX_HASH: 0xdeadbeef
 
       DEMO_ENABLED: "true"
+      DEMO_TENANT_ID: tenant_demo
       DEMO_TARGET_WALLET_ADDRESS: 0x8ba1f109551bd432803012645ac136ddd64dba72
       DEMO_DEFAULT_CHAIN_ID: "1"
 
