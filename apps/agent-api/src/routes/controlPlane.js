@@ -12,7 +12,7 @@ export async function handleControlPlaneSubmit(req, res) {
     return;
   }
 
-  const result = handleControlPlaneSubmission(payload);
+  const result = await handleControlPlaneSubmission(payload);
   sendJson(res, result.statusCode, result.body);
 }
 
