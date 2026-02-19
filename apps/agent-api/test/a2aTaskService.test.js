@@ -8,7 +8,7 @@ import { createA2aAuthService } from '../src/services/a2aAuthService.js';
 import { createA2aTaskService } from '../src/services/a2aTaskService.js';
 import { createA2aTaskStore } from '../src/services/a2aTaskStore.js';
 
-async function withA2aTaskService(testFn, { adminAgentIds = [] } = {}) {
+async function withA2aTaskService(testFn, { adminAgentIds = [], authConfigOverrides = {} } = {}) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'private-db-agent-a2a-'));
   const dbPath = path.join(tempDir, 'a2a.sqlite');
   const adapter = await createSqliteAdapter({ filePath: dbPath });
@@ -18,7 +18,8 @@ async function withA2aTaskService(testFn, { adminAgentIds = [] } = {}) {
   const a2aAuthService = createA2aAuthService({
     enabled: true,
     allowUnsigned: true,
-    adminAgentIds
+    adminAgentIds,
+    ...authConfigOverrides
   });
 
   const a2aTaskService = createA2aTaskService({
@@ -208,6 +209,26 @@ test('a2a task read is allowed for admin agent', async () => {
     },
     {
       adminAgentIds: ['agent-admin']
+    }
+  );
+});
+
+test('a2a agent card exposes configured A2A signature scheme metadata', async () => {
+  await withA2aTaskService(
+    async ({ a2aTaskService }) => {
+      const result = await a2aTaskService.getAgentCard();
+      assert.equal(result.statusCode, 200);
+      assert.equal(result.body.code, 'A2A_AGENT_CARD');
+      assert.equal(result.body.agentCard.authentication.scheme, 'evm-personal-sign');
+      assert.equal(result.body.agentCard.authentication.signerRegistrySize, 1);
+    },
+    {
+      authConfigOverrides: {
+        signatureScheme: 'evm-personal-sign',
+        agentSignerRegistry: {
+          'agent-alpha': '0x0000000000000000000000000000000000001234'
+        }
+      }
     }
   );
 });

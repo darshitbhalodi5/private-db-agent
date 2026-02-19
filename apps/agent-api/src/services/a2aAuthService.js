@@ -1,8 +1,10 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { verifyMessage } from 'ethers';
 import { NonceStore } from './authService.js';
 
 const SIGNING_CONTEXT = 'PRIVATE_DB_AGENT_A2A_V1';
 const MAX_HEADER_VALUE_LENGTH = 256;
+const EVM_ADDRESS_PATTERN = /^0x[a-f0-9]{40}$/i;
 
 function stableSort(value) {
   if (Array.isArray(value)) {
@@ -56,7 +58,7 @@ function normalizeSignature(value) {
     return null;
   }
 
-  return normalized.toLowerCase();
+  return normalized;
 }
 
 function normalizeIsoTimestamp(value) {
@@ -100,6 +102,37 @@ function normalizeAllowedSet(values = []) {
       .map((value) => String(value || '').trim().toLowerCase())
       .filter((value) => value.length > 0)
   );
+}
+
+function normalizeEvmAddress(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (!EVM_ADDRESS_PATTERN.test(normalized)) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function normalizeAgentSignerRegistry(rawRegistry) {
+  if (!rawRegistry || typeof rawRegistry !== 'object' || Array.isArray(rawRegistry)) {
+    return new Map();
+  }
+
+  const signers = new Map();
+  for (const [rawAgentId, rawSigner] of Object.entries(rawRegistry)) {
+    const agentId = normalizeAgentId(rawAgentId);
+    const signerAddress = normalizeEvmAddress(rawSigner);
+    if (!agentId || !signerAddress) {
+      continue;
+    }
+    signers.set(agentId, signerAddress);
+  }
+
+  return signers;
 }
 
 function validateFreshness({ timestamp, nowMs, nonceTtlSeconds, maxFutureSkewSeconds }) {
@@ -161,8 +194,10 @@ function signMessage(message, secret) {
 
 function safeEqualHex(left, right) {
   try {
-    const leftBuffer = Buffer.from(left, 'hex');
-    const rightBuffer = Buffer.from(right, 'hex');
+    const leftHex = String(left || '').replace(/^0x/i, '');
+    const rightHex = String(right || '').replace(/^0x/i, '');
+    const leftBuffer = Buffer.from(leftHex, 'hex');
+    const rightBuffer = Buffer.from(rightHex, 'hex');
     if (leftBuffer.length === 0 || rightBuffer.length === 0) {
       return false;
     }
@@ -193,7 +228,9 @@ export function createA2aAuthService(
     enabled: rawA2aConfig.enabled !== undefined ? Boolean(rawA2aConfig.enabled) : true,
     allowUnsigned:
       rawA2aConfig.allowUnsigned !== undefined ? Boolean(rawA2aConfig.allowUnsigned) : false,
+    signatureScheme: String(rawA2aConfig.signatureScheme || 'hmac-sha256').trim().toLowerCase(),
     sharedSecret: String(rawA2aConfig.sharedSecret || ''),
+    agentSignerRegistry: normalizeAgentSignerRegistry(rawA2aConfig.agentSignerRegistry),
     allowedAgentIds: normalizeAllowedSet(rawA2aConfig.allowedAgentIds || []),
     adminAgentIds: normalizeAllowedSet(rawA2aConfig.adminAgentIds || []),
     taskAllowlist:
@@ -260,6 +297,70 @@ export function createA2aAuthService(
     return authConfig.adminAgentIds.has(safeAgentId);
   }
 
+  function verifyHmacSignature({ signature, message }) {
+    if (!authConfig.sharedSecret) {
+      return authFailure(
+        'A2A_AUTH_NOT_CONFIGURED',
+        'A2A shared secret is not configured while unsigned mode is disabled.',
+        503
+      );
+    }
+
+    const expectedSignature = signMessage(message, authConfig.sharedSecret);
+    if (!safeEqualHex(signature, expectedSignature)) {
+      return authFailure('A2A_SIGNATURE_MISMATCH', 'A2A signature verification failed.', 401);
+    }
+
+    return {
+      ok: true
+    };
+  }
+
+  function verifyEvmSignature({ agentId, signature, message }) {
+    const expectedSignerAddress = authConfig.agentSignerRegistry.get(agentId) || null;
+    if (!expectedSignerAddress) {
+      return authFailure(
+        'A2A_SIGNER_NOT_CONFIGURED',
+        `No signer address configured for agent '${agentId}'.`,
+        503
+      );
+    }
+
+    let recoveredSignerAddress;
+    try {
+      recoveredSignerAddress = normalizeEvmAddress(verifyMessage(message, signature));
+    } catch {
+      recoveredSignerAddress = null;
+    }
+
+    if (!recoveredSignerAddress || recoveredSignerAddress !== expectedSignerAddress) {
+      return authFailure('A2A_SIGNATURE_MISMATCH', 'A2A signature verification failed.', 401, {
+        expectedSignerAddress,
+        recoveredSignerAddress
+      });
+    }
+
+    return {
+      ok: true,
+      signerAddress: recoveredSignerAddress
+    };
+  }
+
+  function verifySignature({ agentId, signature, message }) {
+    if (authConfig.signatureScheme === 'evm-personal-sign') {
+      return verifyEvmSignature({
+        agentId,
+        signature,
+        message
+      });
+    }
+
+    return verifyHmacSignature({
+      signature,
+      message
+    });
+  }
+
   async function authenticate({
     method,
     path,
@@ -292,16 +393,9 @@ export function createA2aAuthService(
     if (authConfig.allowUnsigned) {
       return {
         ok: true,
-        agentId
+        agentId,
+        signatureScheme: authConfig.signatureScheme
       };
-    }
-
-    if (!authConfig.sharedSecret) {
-      return authFailure(
-        'A2A_AUTH_NOT_CONFIGURED',
-        'A2A shared secret is not configured while unsigned mode is disabled.',
-        503
-      );
     }
 
     const signature = normalizeSignature(getHeader(headers, 'x-agent-signature'));
@@ -350,9 +444,13 @@ export function createA2aAuthService(
       idempotencyKey: safeIdempotencyKey,
       payloadHash
     });
-    const expectedSignature = signMessage(message, authConfig.sharedSecret);
-    if (!safeEqualHex(signature, expectedSignature)) {
-      return authFailure('A2A_SIGNATURE_MISMATCH', 'A2A signature verification failed.', 401);
+    const signatureVerification = verifySignature({
+      agentId,
+      signature,
+      message
+    });
+    if (!signatureVerification.ok) {
+      return signatureVerification;
     }
 
     const nonceAccepted = nonceStore.consume(
@@ -372,13 +470,24 @@ export function createA2aAuthService(
       timestamp,
       nonce,
       payloadHash,
-      idempotencyKey: safeIdempotencyKey
+      idempotencyKey: safeIdempotencyKey,
+      signatureScheme: authConfig.signatureScheme,
+      signerAddress: signatureVerification.signerAddress || null
+    };
+  }
+
+  function getAuthMetadata() {
+    return {
+      signatureScheme: authConfig.signatureScheme,
+      signerRegistrySize: authConfig.agentSignerRegistry.size,
+      allowUnsigned: authConfig.allowUnsigned
     };
   }
 
   return {
     authenticate,
     authorizeTaskType,
-    canReadTask
+    canReadTask,
+    getAuthMetadata
   };
 }

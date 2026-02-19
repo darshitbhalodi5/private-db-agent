@@ -444,6 +444,10 @@ export function createA2aTaskService({
 
   function getAgentCard() {
     const baseUrl = '/v1/a2a';
+    const authMetadata =
+      typeof a2aAuthService.getAuthMetadata === 'function' ? a2aAuthService.getAuthMetadata() : {};
+    const signatureScheme =
+      authMetadata.signatureScheme || serviceMetadata?.a2aSignatureScheme || 'hmac-sha256';
 
     return {
       statusCode: 200,
@@ -457,14 +461,16 @@ export function createA2aTaskService({
           protocolVersion: 'a2a-2026-02-18',
           apiVersion: 'v1',
           authentication: {
-            scheme: 'hmac-sha256',
+            scheme: signatureScheme,
             requiredHeaders: [
               'x-agent-id',
               'x-agent-timestamp',
               'x-agent-nonce',
               'x-agent-signature',
               'x-idempotency-key'
-            ]
+            ],
+            signerRegistrySize:
+              Number.isInteger(authMetadata.signerRegistrySize) ? authMetadata.signerRegistrySize : 0
           },
           endpoints: {
             createTask: `${baseUrl}/tasks`,
@@ -520,13 +526,17 @@ async function buildRuntimeA2aTaskService() {
     databaseAdapter
   });
   await a2aTaskStore.ensureInitialized();
+  const a2aAuthService = createA2aAuthService(runtimeConfig.a2a);
+  const authMetadata =
+    typeof a2aAuthService.getAuthMetadata === 'function' ? a2aAuthService.getAuthMetadata() : {};
 
   return createA2aTaskService({
-    a2aAuthService: createA2aAuthService(runtimeConfig.a2a),
+    a2aAuthService,
     a2aTaskStore,
     serviceMetadata: {
       serviceName: runtimeConfig.serviceName,
-      version: runtimeConfig.version
+      version: runtimeConfig.version,
+      a2aSignatureScheme: authMetadata.signatureScheme || runtimeConfig.a2a.signatureScheme
     }
   });
 }

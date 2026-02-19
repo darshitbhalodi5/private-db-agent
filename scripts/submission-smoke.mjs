@@ -1,10 +1,17 @@
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { Wallet } from 'ethers';
 
 const baseUrl = process.argv[2] || 'http://localhost:8080';
 const a2aSharedSecret = process.env.A2A_SHARED_SECRET || process.argv[3] || 'demo-a2a-secret';
 const a2aAgentId = process.env.A2A_AGENT_ID || 'demo-agent';
+const a2aSignatureScheme = (process.env.A2A_SIGNATURE_SCHEME || 'hmac-sha256').trim().toLowerCase();
+const a2aSignerPrivateKey = process.env.A2A_SIGNER_PRIVATE_KEY || '';
+const a2aSignerWallet =
+  a2aSignatureScheme === 'evm-personal-sign' && a2aSignerPrivateKey
+    ? new Wallet(a2aSignerPrivateKey)
+    : null;
 
 function stableSort(value) {
   if (Array.isArray(value)) {
@@ -54,7 +61,7 @@ function buildA2aSigningMessage({
   return `PRIVATE_DB_AGENT_A2A_V1\n${stableStringify(envelope)}`;
 }
 
-function buildA2aHeaders({ method, path, payload, idempotencyKey = null }) {
+async function buildA2aHeaders({ method, path, payload, idempotencyKey = null }) {
   const timestamp = new Date().toISOString();
   const nonce = randomBytes(12).toString('hex');
   const correlationId = `smoke_${randomUUID()}`;
@@ -71,9 +78,15 @@ function buildA2aHeaders({ method, path, payload, idempotencyKey = null }) {
     payloadHash
   });
 
-  const signature = createHmac('sha256', a2aSharedSecret)
-    .update(signingMessage)
-    .digest('hex');
+  let signature;
+  if (a2aSignatureScheme === 'evm-personal-sign') {
+    if (!a2aSignerWallet) {
+      throw new Error('A2A_SIGNER_PRIVATE_KEY is required when A2A_SIGNATURE_SCHEME=evm-personal-sign.');
+    }
+    signature = await a2aSignerWallet.signMessage(signingMessage);
+  } else {
+    signature = createHmac('sha256', a2aSharedSecret).update(signingMessage).digest('hex');
+  }
 
   return {
     accept: 'application/json',
@@ -213,12 +226,12 @@ async function runA2aFlow(queryInputPayload) {
   const createResponse = await fetchJson(`${baseUrl}${pathCreate}`, {
     method: 'POST',
     headers: {
-      ...buildA2aHeaders({
+      ...(await buildA2aHeaders({
         method: 'POST',
         path: pathCreate,
         payload: createPayload,
         idempotencyKey
-      }),
+      })),
       'content-type': 'application/json'
     },
     body: JSON.stringify(createPayload)
@@ -246,12 +259,12 @@ async function runA2aFlow(queryInputPayload) {
   const replayResponse = await fetchJson(`${baseUrl}${pathCreate}`, {
     method: 'POST',
     headers: {
-      ...buildA2aHeaders({
+      ...(await buildA2aHeaders({
         method: 'POST',
         path: pathCreate,
         payload: createPayload,
         idempotencyKey
-      }),
+      })),
       'content-type': 'application/json'
     },
     body: JSON.stringify(createPayload)
@@ -280,12 +293,12 @@ async function runA2aFlow(queryInputPayload) {
   const conflictResponse = await fetchJson(`${baseUrl}${pathCreate}`, {
     method: 'POST',
     headers: {
-      ...buildA2aHeaders({
+      ...(await buildA2aHeaders({
         method: 'POST',
         path: pathCreate,
         payload: conflictPayload,
         idempotencyKey
-      }),
+      })),
       'content-type': 'application/json'
     },
     body: JSON.stringify(conflictPayload)
@@ -309,7 +322,7 @@ async function runA2aFlow(queryInputPayload) {
     const pathGet = `/v1/a2a/tasks/${encodeURIComponent(taskId)}`;
     const getResponse = await fetchJson(`${baseUrl}${pathGet}`, {
       method: 'GET',
-      headers: buildA2aHeaders({
+      headers: await buildA2aHeaders({
         method: 'GET',
         path: `/v1/a2a/tasks/${taskId}`,
         payload: {},
@@ -344,7 +357,7 @@ async function runA2aFlow(queryInputPayload) {
 
   const listResponse = await fetchJson(`${baseUrl}${pathList}?limit=10`, {
     method: 'GET',
-    headers: buildA2aHeaders({
+    headers: await buildA2aHeaders({
       method: 'GET',
       path: pathList,
       payload: {},
