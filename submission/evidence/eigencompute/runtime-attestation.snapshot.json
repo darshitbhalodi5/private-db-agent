@@ -1,0 +1,22 @@
+{
+  "code": "RUNTIME_ATTESTATION_STATUS",
+  "runtime": {
+    "verificationMode": "enforce",
+    "source": "config",
+    "action": "runtime:attestation:read",
+    "sensitive": false,
+    "checkedAt": "2026-02-19T10:39:48.982Z",
+    "verified": true,
+    "verificationStatus": "verified",
+    "claims": {
+      "appId": "private-db-agent-demo-2026",
+      "imageDigest": "sha256:82ed5c34d8b572612b2199932cd260ec619e1887eeb6a2a86f759ae4d77c6626",
+      "attestationReportHash": "sha256:cd5ad13ce0bc8f8f5b2f33f4c26d1f27818054e42d66ca4a65153cdccaccb765",
+      "onchainDeploymentTxHash": "0x71a8f3e2bf89af9f9819cc84d552197f0d0ff0f3a37f8b0cef18a1dfe0f9b123",
+      "issuedAt": null,
+      "expiresAt": null
+    },
+    "claimsHash": "8600006f6341112cae8704cd200dd41c27c01964b43df75e2e7634dcde3a741d",
+    "issues": []
+  }
+}
