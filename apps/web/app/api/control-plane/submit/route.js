@@ -19,6 +19,30 @@ function validatePayload(payload) {
     return 'Payload must include requestId.';
   }
 
+  if (typeof payload.tenantId !== 'string' || payload.tenantId.trim().length === 0) {
+    return 'Payload must include tenantId.';
+  }
+
+  if (typeof payload.actorWallet !== 'string' || payload.actorWallet.trim().length === 0) {
+    return 'Payload must include actorWallet.';
+  }
+
+  if (!payload.auth || typeof payload.auth !== 'object' || Array.isArray(payload.auth)) {
+    return 'Payload must include auth object.';
+  }
+
+  if (typeof payload.auth.nonce !== 'string' || payload.auth.nonce.trim().length === 0) {
+    return 'Payload auth must include nonce.';
+  }
+
+  if (typeof payload.auth.signedAt !== 'string' || payload.auth.signedAt.trim().length === 0) {
+    return 'Payload auth must include signedAt.';
+  }
+
+  if (typeof payload.auth.signature !== 'string' || payload.auth.signature.trim().length === 0) {
+    return 'Payload auth must include signature.';
+  }
+
   return null;
 }
 
