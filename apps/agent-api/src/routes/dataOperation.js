@@ -1,4 +1,4 @@
-import { readJsonBody, sendJson } from '../lib/http.js';
+import { readJsonBody, sendJson, sendJsonBodyReadError } from '../lib/http.js';
 import { handleDataOperationRequest } from '../services/dataOperationService.js';
 
 export async function handleDataOperationExecute(req, res) {
@@ -6,11 +6,8 @@ export async function handleDataOperationExecute(req, res) {
 
   try {
     payload = await readJsonBody(req);
-  } catch {
-    sendJson(res, 400, {
-      error: 'INVALID_JSON',
-      message: 'Request body must be valid JSON.'
-    });
+  } catch (error) {
+    sendJsonBodyReadError(res, error);
     return;
   }
 

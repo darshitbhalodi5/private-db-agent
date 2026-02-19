@@ -9,6 +9,7 @@ import {
   createPermissiveRuntimeAttestationService,
   createRuntimeAttestationService
 } from './runtimeAttestationService.js';
+import { getRuntimeMetricsService } from './metricsService.js';
 import { validateAndCompileSchemaDsl } from './schemaDslService.js';
 
 const TENANT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;
@@ -42,7 +43,8 @@ export function createSchemaApplyService({
   migrationRunnerService,
   actionAuthorizationService,
   aiDraftStore,
-  runtimeAttestationService = createPermissiveRuntimeAttestationService()
+  runtimeAttestationService = createPermissiveRuntimeAttestationService(),
+  metricsService = getRuntimeMetricsService()
 }) {
   if (!migrationRunnerService) {
     throw new Error('migrationRunnerService is required.');
@@ -169,11 +171,23 @@ export function createSchemaApplyService({
       };
     }
 
-    const migrationApply = await migrationRunnerService.applyMigrationPlan({
-      tenantId,
-      requestId: schemaDslResult.normalizedDsl.requestId,
-      migrationPlan: schemaDslResult.migrationPlan
-    });
+    const migrationStartMs = Date.now();
+    let migrationApply;
+    try {
+      migrationApply = await migrationRunnerService.applyMigrationPlan({
+        tenantId,
+        requestId: schemaDslResult.normalizedDsl.requestId,
+        migrationPlan: schemaDslResult.migrationPlan
+      });
+    } finally {
+      metricsService.observeDuration(
+        'migration_apply_duration_ms',
+        Math.max(0, Date.now() - migrationStartMs),
+        {
+          status: migrationApply?.ok ? 'success' : 'failed'
+        }
+      );
+    }
 
     if (!migrationApply.ok) {
       return {

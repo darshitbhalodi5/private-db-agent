@@ -1,4 +1,4 @@
-import { readJsonBody, sendJson } from '../lib/http.js';
+import { readJsonBody, sendJson, sendJsonBodyReadError } from '../lib/http.js';
 import { handleControlPlaneSubmission } from '../services/controlPlaneSubmissionService.js';
 import { handleSchemaApplyRequest } from '../services/schemaApplyService.js';
 
@@ -7,11 +7,8 @@ export async function handleControlPlaneSubmit(req, res) {
 
   try {
     payload = await readJsonBody(req);
-  } catch {
-    sendJson(res, 400, {
-      error: 'INVALID_JSON',
-      message: 'Request body must be valid JSON.'
-    });
+  } catch (error) {
+    sendJsonBodyReadError(res, error);
     return;
   }
 
@@ -24,11 +21,8 @@ export async function handleControlPlaneApply(req, res) {
 
   try {
     payload = await readJsonBody(req);
-  } catch {
-    sendJson(res, 400, {
-      error: 'INVALID_JSON',
-      message: 'Request body must be valid JSON.'
-    });
+  } catch (error) {
+    sendJsonBodyReadError(res, error);
     return;
   }
 

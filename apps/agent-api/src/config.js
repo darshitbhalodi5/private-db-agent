@@ -5,6 +5,11 @@ const DEFAULT_POSTGRES_POOL_SIZE = 10;
 const DEFAULT_SQLITE_PATH = './data/private-db-agent.sqlite';
 const DEFAULT_DEMO_CHAIN_ID = 1;
 const DEFAULT_DEMO_TARGET_WALLET = '0x8ba1f109551bd432803012645ac136ddd64dba72';
+const DEFAULT_MAX_JSON_BODY_BYTES = 1_048_576;
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
+const DEFAULT_RATE_LIMIT_MAX_REQUESTS = 300;
+const DEFAULT_SECRET_ROTATION_DAYS = 30;
 const DEFAULT_AI_SIGNER_PRIVATE_KEY =
   '0x59c6995e998f97a5a0044966f094538e5b32cbac50b1f5f5c4ea7f7f0e5f7a72';
 
@@ -244,6 +249,43 @@ export function loadConfig(env = process.env) {
         'A2A_MAX_FUTURE_SKEW_SECONDS',
         env.A2A_MAX_FUTURE_SKEW_SECONDS,
         DEFAULT_MAX_FUTURE_SKEW_SECONDS
+      )
+    },
+    observability: {
+      logLevel: parseEnum('LOG_LEVEL', env.LOG_LEVEL, ['debug', 'info', 'warn', 'error'], 'info'),
+      metricsEnabled: parseBoolean(env.METRICS_ENABLED, true),
+      metricsRouteEnabled: parseBoolean(env.METRICS_ROUTE_ENABLED, true)
+    },
+    security: {
+      maxJsonBodyBytes: parsePositiveInteger(
+        'MAX_JSON_BODY_BYTES',
+        env.MAX_JSON_BODY_BYTES,
+        DEFAULT_MAX_JSON_BODY_BYTES
+      ),
+      requestTimeoutMs: parsePositiveInteger(
+        'REQUEST_TIMEOUT_MS',
+        env.REQUEST_TIMEOUT_MS,
+        DEFAULT_REQUEST_TIMEOUT_MS
+      ),
+      rateLimit: {
+        enabled: parseBoolean(env.RATE_LIMIT_ENABLED, true),
+        windowMs: parsePositiveInteger(
+          'RATE_LIMIT_WINDOW_MS',
+          env.RATE_LIMIT_WINDOW_MS,
+          DEFAULT_RATE_LIMIT_WINDOW_MS
+        ),
+        maxRequests: parsePositiveInteger(
+          'RATE_LIMIT_MAX_REQUESTS',
+          env.RATE_LIMIT_MAX_REQUESTS,
+          DEFAULT_RATE_LIMIT_MAX_REQUESTS
+        )
+      }
+    },
+    operations: {
+      secretRotationDays: parsePositiveInteger(
+        'SECRET_ROTATION_DAYS',
+        env.SECRET_ROTATION_DAYS,
+        DEFAULT_SECRET_ROTATION_DAYS
       )
     }
   };
