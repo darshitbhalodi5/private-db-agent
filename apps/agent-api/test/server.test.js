@@ -29,7 +29,8 @@ function createStubbedQueryService({
         limit: 50
       }
     }
-  }
+  },
+  grantRecords = null
 } = {}) {
   const receiptService = {
     buildReceipt: () => ({
@@ -57,6 +58,26 @@ function createStubbedQueryService({
     })
   };
 
+  const safeWalletAddress =
+    authResult && authResult.ok && typeof authResult.requester === 'string'
+      ? authResult.requester.toLowerCase()
+      : '0x0000000000000000000000000000000000001234';
+
+  const activeGrants = Array.isArray(grantRecords)
+    ? grantRecords
+    : [
+        {
+          grantId: 'grant_stub_db_read_allow',
+          tenantId: 'tenant_demo',
+          walletAddress: safeWalletAddress,
+          scopeType: 'database',
+          scopeId: '*',
+          operation: 'read',
+          effect: 'allow',
+          createdAt: '2026-02-17T10:00:00.000Z'
+        }
+      ];
+
   return createQueryService({
     authService: {
       authenticate: async () => authResult
@@ -66,6 +87,9 @@ function createStubbedQueryService({
     },
     queryExecutionService: {
       execute: async () => executionResult
+    },
+    policyGrantStore: {
+      listActiveGrants: async () => activeGrants
     },
     receiptService,
     auditService
@@ -90,6 +114,7 @@ test('loadConfig returns default values including database settings', () => {
   assert.equal(config.proof.attestationSource, 'config');
   assert.equal(config.proof.attestationMaxAgeSeconds, 900);
   assert.equal(config.demo.enabled, true);
+  assert.equal(config.demo.tenantId, 'tenant_demo');
   assert.equal(config.demo.targetWalletAddress, '0x8ba1f109551bd432803012645ac136ddd64dba72');
   assert.equal(config.demo.defaultChainId, 1);
   assert.equal(config.database.driver, 'sqlite');
@@ -123,6 +148,7 @@ test('query service returns execution result after auth and policy pass', async 
 
   const result = await queryService.handle({
     requestId: 'req-1',
+    tenantId: 'tenant_demo',
     requester: '0x0000000000000000000000000000000000001234',
     capability: 'balances:read',
     queryTemplate: 'wallet_balances',
@@ -169,6 +195,7 @@ test('query service returns policy denied with allowed templates', async () => {
 
   const result = await queryService.handle({
     requestId: 'req-3',
+    tenantId: 'tenant_demo',
     requester: '0x0000000000000000000000000000000000001234',
     capability: 'balances:read',
     queryTemplate: 'wallet_transactions'
@@ -193,6 +220,7 @@ test('query service returns execution failure details', async () => {
 
   const result = await queryService.handle({
     requestId: 'req-4',
+    tenantId: 'tenant_demo',
     requester: '0x0000000000000000000000000000000000001234',
     capability: 'balances:read',
     queryTemplate: 'unknown_template'
@@ -201,4 +229,23 @@ test('query service returns execution failure details', async () => {
   assert.equal(result.statusCode, 400);
   assert.equal(result.body.error, 'QUERY_EXECUTION_FAILED');
   assert.equal(result.body.code, 'UNKNOWN_QUERY_TEMPLATE');
+});
+
+test('query service denies unknown wallet without explicit tenant grant', async () => {
+  const queryService = createStubbedQueryService({
+    grantRecords: []
+  });
+
+  const result = await queryService.handle({
+    requestId: 'req-5',
+    tenantId: 'tenant_demo',
+    requester: '0x0000000000000000000000000000000000001234',
+    capability: 'balances:read',
+    queryTemplate: 'wallet_balances',
+    queryParams: { walletAddress: '0x0000000000000000000000000000000000001234', chainId: 1 }
+  });
+
+  assert.equal(result.statusCode, 403);
+  assert.equal(result.body.error, 'POLICY_DENIED');
+  assert.equal(result.body.code, 'FALLBACK_DENY');
 });

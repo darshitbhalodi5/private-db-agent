@@ -13,6 +13,7 @@ import { createPolicyMutationAuthService } from '../src/services/policyMutationA
 
 const adminWallet = '0x8ba1f109551bd432803012645ac136ddd64dba72';
 const managerWallet = '0x0000000000000000000000000000000000001234';
+const unknownWallet = '0x0000000000000000000000000000000000009999';
 const tenantId = 'tenant_demo';
 
 async function withDataOperationContext(testFn, { runtimeAttestationService = null } = {}) {
@@ -185,6 +186,19 @@ test('data operation templates execute read/insert/update and deny delete by pol
     assert.equal(readResult.statusCode, 200);
     assert.equal(readResult.body.rowCount, 1);
     assert.equal(readResult.body.rows[0].quantity, 4);
+
+    const unknownReadDenied = await dataOperationService.execute({
+      requestId: 'req_data_read_unknown_wallet',
+      tenantId,
+      actorWallet: unknownWallet,
+      operation: 'read',
+      tableName: 'inventory',
+      filters: {
+        item_id: 'item-1'
+      }
+    });
+    assert.equal(unknownReadDenied.statusCode, 403);
+    assert.equal(unknownReadDenied.body.error, 'POLICY_DENIED');
 
     const updateResult = await dataOperationService.execute({
       requestId: 'req_data_update',
