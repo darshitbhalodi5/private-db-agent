@@ -49,8 +49,6 @@ Frontend defaults to `http://localhost:3000`.
 - `apps/agent-api`: backend API service
 - `apps/web`: Next.js frontend app
 - `packages/shared-types`: shared domain constants/types
-- `packages/policy-core`: policy engine package scaffold
-- `packages/receipts`: receipt package scaffold
 
 ## Docker package
 
