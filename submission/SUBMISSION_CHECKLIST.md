@@ -25,16 +25,19 @@
 - [x] Postgres init + seed SQL.
 - [x] Local `.env.example` with all variables.
 - [x] Demo smoke script (`scripts/demo-smoke.mjs`).
+- [x] Submission smoke script (`scripts/submission-smoke.mjs`).
 - [x] Demo runbook (`submission/DEMO_RUNBOOK.md`).
 - [x] EigenCompute deployment manifest (`deployment/eigencompute/agent-manifest.yaml`).
 - [x] Runtime attestation sample artifact (`deployment/eigencompute/runtime-attestation.sample.json`).
 - [x] Manifest render helper (`scripts/render-eigencompute-manifest.sh`).
+- [x] Known limitations and trust assumptions document.
 
 ## Pre-Submission Commands
 
 ```bash
 npm test
 node scripts/demo-smoke.mjs http://localhost:8080
+node scripts/submission-smoke.mjs http://localhost:8080
 ```
 
 ## Optional Demo Command

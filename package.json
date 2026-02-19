@@ -16,6 +16,7 @@
     "build": "npm run build --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "demo:smoke": "node scripts/demo-smoke.mjs http://localhost:8080",
+    "demo:submission-smoke": "node scripts/submission-smoke.mjs http://localhost:8080",
     "eigen:manifest": "bash scripts/render-eigencompute-manifest.sh",
     "docker:up": "docker compose up -d --build",
     "docker:down": "docker compose down -v"

@@ -3,11 +3,13 @@ WORKDIR /repo
 
 COPY package.json package-lock.json ./
 COPY apps/agent-api/package.json ./apps/agent-api/package.json
+COPY packages/shared-types/package.json ./packages/shared-types/package.json
 
-RUN npm ci --omit=dev --workspace apps/agent-api
+RUN npm ci --omit=dev --workspace packages/shared-types --workspace apps/agent-api
 
 COPY apps/agent-api/src ./apps/agent-api/src
 COPY apps/agent-api/public ./apps/agent-api/public
+COPY packages/shared-types/src ./packages/shared-types/src
 COPY README.md ./README.md
 
 EXPOSE 8080

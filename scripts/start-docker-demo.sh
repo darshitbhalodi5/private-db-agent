@@ -23,4 +23,7 @@ for i in {1..60}; do
 echo "Running demo smoke checks..."
 node scripts/demo-smoke.mjs http://localhost:8080
 
+echo "Running submission smoke checks..."
+node scripts/submission-smoke.mjs http://localhost:8080
+
 echo "Done. Open http://localhost:8080/demo"

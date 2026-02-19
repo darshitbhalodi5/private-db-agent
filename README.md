@@ -339,6 +339,30 @@ Secret hygiene/rotation:
 - Rotate auth/agent shared secrets on a fixed cadence (`SECRET_ROTATION_DAYS`).
 - Keep least-privilege separation between demo keys and production keys.
 
+## Demo readiness and submission flow (Task 10)
+
+Final smoke/demo commands:
+
+- `node scripts/demo-smoke.mjs http://localhost:8080`
+- `node scripts/submission-smoke.mjs http://localhost:8080`
+- `bash scripts/start-docker-demo.sh`
+
+Task 10 smoke coverage:
+
+- health, runtime attestation, A2A discovery/contracts, ops metrics
+- allow/deny demo query scenarios
+- A2A task lifecycle checks:
+  - task create
+  - idempotent replay
+  - idempotency conflict for changed payload
+  - task fetch/list
+
+Submission artifacts:
+
+- `submission/DEMO_RUNBOOK.md`
+- `submission/SUBMISSION_CHECKLIST.md`
+- `submission/KNOWN_LIMITATIONS_AND_TRUST_ASSUMPTIONS.md`
+
 ## Response receipt contract
 
 Every query response now includes:
