@@ -1,4 +1,6 @@
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const baseUrl = process.argv[2] || 'http://localhost:8080';
 const a2aSharedSecret = process.env.A2A_SHARED_SECRET || process.argv[3] || 'demo-a2a-secret';
@@ -130,74 +132,70 @@ async function assertEndpoint({ name, url, options = {}, expectedStatus = 200 })
   };
 }
 
-async function runDemoScenarios() {
-  const scenariosResponse = await fetchJson(`${baseUrl}/v1/demo/scenarios`);
-  if (!scenariosResponse.ok) {
+function parseJsonOutput(stdout) {
+  const trimmed = String(stdout || '').trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+async function runDemoAcceptanceMatrix() {
+  const demoScriptPath = fileURLToPath(new URL('./demo-smoke.mjs', import.meta.url));
+  const execution = spawnSync(process.execPath, [demoScriptPath, baseUrl], {
+    encoding: 'utf-8',
+    env: process.env
+  });
+
+  if (execution.error) {
+    throw execution.error;
+  }
+
+  const summary = parseJsonOutput(execution.stdout);
+  if (!summary) {
     throw new Error(
-      `Failed to load scenarios (${scenariosResponse.status}): ${JSON.stringify(scenariosResponse.body)}`
+      `Unable to parse demo-smoke output. status=${execution.status}; stderr=${String(execution.stderr || '').trim()}`
     );
   }
 
-  const scenarios = scenariosResponse.body.scenarios || [];
-  if (scenarios.length === 0) {
-    throw new Error('No demo scenarios returned by API.');
-  }
+  const matrixChecks = Array.isArray(summary.matrix) ? summary.matrix : [];
+  const checks = matrixChecks.map((entry) =>
+    createCheckResult({
+      name: `demo-matrix:${entry.id || 'unknown'}`,
+      pass: Boolean(entry.pass),
+      details: {
+        expectedStatus: entry.expectedStatus ?? null,
+        actualStatus: entry.actualStatus ?? null,
+        code: entry.code || null
+      }
+    })
+  );
 
-  const checks = [];
-  const scenarioOutputs = [];
-
-  for (const scenario of scenarios) {
-    const payloadResponse = await fetchJson(
-      `${baseUrl}/v1/demo/payload?scenario=${encodeURIComponent(scenario.id)}`
-    );
-    if (!payloadResponse.ok) {
-      checks.push(
-        createCheckResult({
-          name: `demo:${scenario.id}:payload`,
-          pass: false,
-          details: {
-            expectedStatus: 200,
-            actualStatus: payloadResponse.status,
-            code: payloadResponse.body?.code || payloadResponse.body?.error || null
-          }
-        })
-      );
-      continue;
-    }
-
-    const queryResponse = await fetchJson(`${baseUrl}/v1/query`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json'
-      },
-      body: JSON.stringify(payloadResponse.body.payload)
-    });
-
-    const pass = queryResponse.status === scenario.expectedStatusCode;
-    checks.push(
-      createCheckResult({
-        name: `demo:${scenario.id}:query`,
-        pass,
-        details: {
-          expectedStatus: scenario.expectedStatusCode,
-          actualStatus: queryResponse.status,
-          code: queryResponse.body?.code || queryResponse.body?.error || null
-        }
-      })
-    );
-
-    scenarioOutputs.push({
-      scenarioId: scenario.id,
-      status: queryResponse.status,
-      expectedStatus: scenario.expectedStatusCode,
-      code: queryResponse.body?.code || queryResponse.body?.error || null,
-      receiptId: queryResponse.body?.receipt?.receiptId || null
-    });
-  }
+  const failedCount =
+    typeof summary.totals?.failed === 'number' ? summary.totals.failed : matrixChecks.filter((entry) => !entry.pass).length;
+  checks.push(
+    createCheckResult({
+      name: 'demo-matrix:overall',
+      pass: failedCount === 0 && execution.status === 0,
+      details: {
+        expectedStatus: 0,
+        actualStatus: execution.status ?? null,
+        code: failedCount === 0 ? 'PASS' : 'FAIL',
+        matrixChecks: matrixChecks.length,
+        matrixFailed: failedCount
+      }
+    })
+  );
 
   return {
     checks,
-    scenarioOutputs
+    summary,
+    exitStatus: execution.status ?? null
   };
 }
 
@@ -404,13 +402,8 @@ async function main() {
   });
   checks.push(contracts.check);
 
-  const demo = await runDemoScenarios();
+  const demo = await runDemoAcceptanceMatrix();
   checks.push(...demo.checks);
-
-  const allowScenario = demo.scenarioOutputs.find((entry) => entry.scenarioId === 'allow-balance-read');
-  if (!allowScenario) {
-    throw new Error('Unable to resolve allow-balance-read scenario output.');
-  }
 
   const allowPayloadResponse = await fetchJson(
     `${baseUrl}/v1/demo/payload?scenario=${encodeURIComponent('allow-balance-read')}`
@@ -443,7 +436,11 @@ async function main() {
       claimsHash: runtimeAttestation.response.body?.runtime?.claimsHash || null
     },
     checks,
-    demoScenarios: demo.scenarioOutputs,
+    demoMatrix: {
+      tenantId: demo.summary?.tenantId || null,
+      totals: demo.summary?.totals || null,
+      matrix: Array.isArray(demo.summary?.matrix) ? demo.summary.matrix : []
+    },
     metricsSnapshot: {
       counters: metrics.response.body?.metrics?.counters?.length || 0,
       durations: metrics.response.body?.metrics?.durations?.length || 0
