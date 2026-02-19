@@ -2,6 +2,10 @@ import { loadConfig } from '../config.js';
 import { createDatabaseAdapter } from '../db/databaseAdapterFactory.js';
 import { createQueryExecutionService } from '../query/queryExecutionService.js';
 import { getQueryTemplate, TEMPLATE_MODE } from '../query/templateRegistry.js';
+import {
+  attachActionResponseEnvelope,
+  createNoopAuditService
+} from './actionResponseEnvelopeService.js';
 import { evaluatePolicyDecision } from './policyDecisionEngine.js';
 import { createAuditService } from './auditService.js';
 import { createAuthService } from './authService.js';
@@ -55,15 +59,6 @@ function validatePayload(payload) {
   }
 
   return { ok: true };
-}
-
-function createNoopAuditService() {
-  return {
-    recordDecision: async () => ({
-      logged: false,
-      code: 'NO_AUDIT_SERVICE'
-    })
-  };
 }
 
 function createDefaultExecutionService() {
@@ -157,34 +152,6 @@ async function evaluateGrantPolicyDecision({
   };
 }
 
-function normalizeAuditResult(auditResult) {
-  if (!auditResult) {
-    return {
-      logged: false,
-      code: 'UNKNOWN_AUDIT_RESULT',
-      message: null
-    };
-  }
-
-  return {
-    logged: Boolean(auditResult.logged),
-    code: auditResult.code || 'UNKNOWN_AUDIT_RESULT',
-    message: auditResult.message || null
-  };
-}
-
-function getRequesterForAudit(payload, authResult) {
-  if (authResult?.requester) {
-    return authResult.requester;
-  }
-
-  if (payload && typeof payload.requester === 'string' && payload.requester.trim().length > 0) {
-    return payload.requester.trim();
-  }
-
-  return null;
-}
-
 async function attachReceiptAndAudit({
   payload,
   statusCode,
@@ -198,40 +165,26 @@ async function attachReceiptAndAudit({
   auditService,
   runtimeVerification
 }) {
-  const receipt = receiptService.buildReceipt({
+  return attachActionResponseEnvelope({
     payload,
-    statusCode,
+    result: {
+      statusCode,
+      body
+    },
     decision,
     auth,
     policy,
     execution,
-    databaseDialect: queryExecutionService?.dialect || 'unknown',
-    runtimeVerification
+    runtimeVerification,
+    auditContext: {
+      action: 'query:execute',
+      resource: payload?.queryTemplate || null,
+      requester: auth?.requester || payload?.requester || null
+    },
+    receiptService,
+    auditService,
+    databaseDialect: queryExecutionService?.dialect || 'unknown'
   });
-
-  let auditResult;
-  try {
-    auditResult = await auditService.recordDecision({
-      payload,
-      requester: getRequesterForAudit(payload, auth),
-      decision: decision.outcome
-    });
-  } catch (error) {
-    auditResult = {
-      logged: false,
-      code: 'AUDIT_WRITE_FAILED',
-      message: error?.message || 'Audit logging failed.'
-    };
-  }
-
-  return {
-    statusCode,
-    body: {
-      ...body,
-      receipt,
-      audit: normalizeAuditResult(auditResult)
-    }
-  };
 }
 
 export function createQueryService({
