@@ -168,6 +168,7 @@ export class NonceStore {
 export function buildSignedMessage(payload) {
   const envelope = {
     requestId: payload.requestId,
+    tenantId: payload.tenantId || null,
     requester: payload.requester,
     capability: payload.capability,
     queryTemplate: payload.queryTemplate,

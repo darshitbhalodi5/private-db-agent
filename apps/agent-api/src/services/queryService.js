@@ -1,14 +1,19 @@
 import { loadConfig } from '../config.js';
 import { createDatabaseAdapter } from '../db/databaseAdapterFactory.js';
 import { createQueryExecutionService } from '../query/queryExecutionService.js';
+import { getQueryTemplate, TEMPLATE_MODE } from '../query/templateRegistry.js';
+import { evaluatePolicyDecision } from './policyDecisionEngine.js';
 import { createAuditService } from './auditService.js';
 import { createAuthService } from './authService.js';
+import { createPolicyGrantStore } from './policyGrantStore.js';
 import { createPolicyService } from './policyService.js';
 import { createReceiptService } from './receiptService.js';
 import {
   createPermissiveRuntimeAttestationService,
   createRuntimeAttestationService
 } from './runtimeAttestationService.js';
+
+const TENANT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 
 function validationError(message) {
   return {
@@ -26,13 +31,18 @@ function validatePayload(payload) {
     return validationError('Request body must be a JSON object.');
   }
 
-  const requiredFields = ['requestId', 'requester', 'capability', 'queryTemplate'];
+  const requiredFields = ['requestId', 'tenantId', 'requester', 'capability', 'queryTemplate'];
   const missing = requiredFields.filter(
     (field) => typeof payload[field] !== 'string' || payload[field].trim().length === 0
   );
 
   if (missing.length > 0) {
     return validationError(`Missing required fields: ${missing.join(', ')}`);
+  }
+
+  const tenantId = payload.tenantId.trim().toLowerCase();
+  if (!TENANT_ID_PATTERN.test(tenantId)) {
+    return validationError('tenantId must match [a-z0-9][a-z0-9_-]{0,62}.');
   }
 
   if (
@@ -71,6 +81,80 @@ function createDefaultExecutionService() {
 
 function createNoopRuntimeAttestationService() {
   return createPermissiveRuntimeAttestationService();
+}
+
+function createNoopPolicyGrantStore() {
+  return {
+    async listActiveGrants() {
+      return [];
+    }
+  };
+}
+
+function normalizeTenantId(rawTenantId) {
+  if (typeof rawTenantId !== 'string') {
+    return null;
+  }
+
+  const normalized = rawTenantId.trim().toLowerCase();
+  return TENANT_ID_PATTERN.test(normalized) ? normalized : null;
+}
+
+function resolveQueryGrantOperation({ capability, queryTemplate }) {
+  const template = getQueryTemplate(queryTemplate);
+  if (template?.mode === TEMPLATE_MODE.WRITE) {
+    return 'insert';
+  }
+
+  if (template?.mode === TEMPLATE_MODE.READ) {
+    return 'read';
+  }
+
+  if (typeof capability === 'string' && capability.endsWith(':write')) {
+    return 'insert';
+  }
+
+  return 'read';
+}
+
+async function evaluateGrantPolicyDecision({
+  policyGrantStore,
+  tenantId,
+  requester,
+  capability,
+  queryTemplate
+}) {
+  const operation = resolveQueryGrantOperation({
+    capability,
+    queryTemplate
+  });
+
+  const grants = await policyGrantStore.listActiveGrants({
+    tenantId,
+    walletAddress: requester
+  });
+
+  const decisionResult = evaluatePolicyDecision({
+    tenantId,
+    walletAddress: requester,
+    scopeType: 'database',
+    scopeId: '*',
+    operation,
+    grants
+  });
+
+  if (!decisionResult.ok) {
+    return {
+      ok: false,
+      error: decisionResult.error
+    };
+  }
+
+  return {
+    ok: true,
+    operation,
+    decision: decisionResult.decision
+  };
 }
 
 function normalizeAuditResult(auditResult) {
@@ -153,6 +237,7 @@ async function attachReceiptAndAudit({
 export function createQueryService({
   authService,
   policyService,
+  policyGrantStore,
   queryExecutionService,
   receiptService,
   auditService,
@@ -163,6 +248,7 @@ export function createQueryService({
     buildReceipt: () => null
   };
   const safeAuditService = auditService || createNoopAuditService();
+  const safePolicyGrantStore = policyGrantStore || createNoopPolicyGrantStore();
   const safeRuntimeAttestationService =
     runtimeAttestationService || createNoopRuntimeAttestationService();
 
@@ -256,6 +342,31 @@ export function createQueryService({
         });
       }
 
+      const tenantId = normalizeTenantId(payload.tenantId);
+      if (!tenantId) {
+        return attachReceiptAndAudit({
+          payload,
+          statusCode: 400,
+          body: {
+            error: 'VALIDATION_ERROR',
+            message: 'tenantId must match [a-z0-9][a-z0-9_-]{0,62}.'
+          },
+          decision: {
+            outcome: 'deny',
+            stage: 'validation',
+            code: 'VALIDATION_ERROR',
+            message: 'tenantId must match [a-z0-9][a-z0-9_-]{0,62}.'
+          },
+          auth: authResult,
+          policy: null,
+          execution: null,
+          queryExecutionService: safeQueryExecutionService,
+          receiptService: safeReceiptService,
+          auditService: safeAuditService,
+          runtimeVerification
+        });
+      }
+
       const policyResult = policyService.evaluateAccess({
         requester: authResult.requester,
         capability: payload.capability,
@@ -285,6 +396,111 @@ export function createQueryService({
           },
           auth: authResult,
           policy: policyResult,
+          execution: null,
+          queryExecutionService: safeQueryExecutionService,
+          receiptService: safeReceiptService,
+          auditService: safeAuditService,
+          runtimeVerification
+        });
+      }
+
+      let grantPolicyResult;
+      try {
+        grantPolicyResult = await evaluateGrantPolicyDecision({
+          policyGrantStore: safePolicyGrantStore,
+          tenantId,
+          requester: authResult.requester,
+          capability: payload.capability,
+          queryTemplate: payload.queryTemplate
+        });
+      } catch (error) {
+        return attachReceiptAndAudit({
+          payload,
+          statusCode: 503,
+          body: {
+            error: 'POLICY_STORE_UNAVAILABLE',
+            code: 'POLICY_STORE_UNAVAILABLE',
+            message: error?.message || 'Unable to evaluate grant policy for request.',
+            requestId: payload.requestId,
+            tenantId
+          },
+          decision: {
+            outcome: 'deny',
+            stage: 'policy',
+            code: 'POLICY_STORE_UNAVAILABLE',
+            message: error?.message || 'Unable to evaluate grant policy for request.'
+          },
+          auth: authResult,
+          policy: null,
+          execution: null,
+          queryExecutionService: safeQueryExecutionService,
+          receiptService: safeReceiptService,
+          auditService: safeAuditService,
+          runtimeVerification
+        });
+      }
+
+      if (!grantPolicyResult.ok) {
+        return attachReceiptAndAudit({
+          payload,
+          statusCode: 400,
+          body: {
+            error: grantPolicyResult.error.error,
+            code: grantPolicyResult.error.error,
+            message: grantPolicyResult.error.message,
+            requestId: payload.requestId,
+            tenantId,
+            details: grantPolicyResult.error.details || {}
+          },
+          decision: {
+            outcome: 'deny',
+            stage: 'policy',
+            code: grantPolicyResult.error.error,
+            message: grantPolicyResult.error.message
+          },
+          auth: authResult,
+          policy: null,
+          execution: null,
+          queryExecutionService: safeQueryExecutionService,
+          receiptService: safeReceiptService,
+          auditService: safeAuditService,
+          runtimeVerification
+        });
+      }
+
+      if (!grantPolicyResult.decision.allowed) {
+        const combinedPolicyResult = {
+          allowed: false,
+          code: grantPolicyResult.decision.code,
+          message: grantPolicyResult.decision.message
+        };
+
+        return attachReceiptAndAudit({
+          payload,
+          statusCode: 403,
+          body: {
+            error: 'POLICY_DENIED',
+            code: grantPolicyResult.decision.code,
+            message: grantPolicyResult.decision.message,
+            requestId: payload.requestId,
+            tenantId,
+            capability: payload.capability,
+            queryTemplate: payload.queryTemplate,
+            details: {
+              capabilityPolicyCode: policyResult.code,
+              capabilityPolicyMessage: policyResult.message,
+              operation: grantPolicyResult.operation,
+              evaluationPath: grantPolicyResult.decision.evaluationPath
+            }
+          },
+          decision: {
+            outcome: 'deny',
+            stage: 'policy',
+            code: grantPolicyResult.decision.code,
+            message: grantPolicyResult.decision.message
+          },
+          auth: authResult,
+          policy: combinedPolicyResult,
           execution: null,
           queryExecutionService: safeQueryExecutionService,
           receiptService: safeReceiptService,
@@ -333,6 +549,7 @@ export function createQueryService({
         statusCode: execution.statusCode,
         body: {
           requestId: payload.requestId,
+          tenantId,
           requester: authResult.requester,
           capability: payload.capability,
           queryTemplate: payload.queryTemplate,
@@ -345,7 +562,10 @@ export function createQueryService({
           },
           policy: {
             code: policyResult.code,
-            message: policyResult.message
+            message: policyResult.message,
+            grantCode: grantPolicyResult.decision.code,
+            grantMessage: grantPolicyResult.decision.message,
+            operation: grantPolicyResult.operation
           }
         },
         decision: {
@@ -355,7 +575,11 @@ export function createQueryService({
           message: 'Query executed through approved template.'
         },
         auth: authResult,
-        policy: policyResult,
+        policy: {
+          allowed: true,
+          code: grantPolicyResult.decision.code,
+          message: grantPolicyResult.decision.message
+        },
         execution,
         queryExecutionService: safeQueryExecutionService,
         receiptService: safeReceiptService,
@@ -379,6 +603,8 @@ let runtimeQueryServicePromise = null;
 
 async function buildRuntimeQueryService() {
   const databaseAdapter = await createDatabaseAdapter(runtimeConfig.database);
+  const policyGrantStore = createPolicyGrantStore({ databaseAdapter });
+  await policyGrantStore.ensureInitialized();
   const queryExecutionService = createQueryExecutionService({
     databaseAdapter,
     enforceCapabilityMode: runtimeConfig.policy.enforceCapabilityMode
@@ -387,6 +613,7 @@ async function buildRuntimeQueryService() {
   return createQueryService({
     authService: createAuthService(runtimeConfig.auth),
     policyService: createPolicyService(runtimeConfig.policy),
+    policyGrantStore,
     queryExecutionService,
     receiptService: defaultReceiptService,
     auditService: createAuditService({ databaseAdapter }),
@@ -438,6 +665,7 @@ export async function handleQueryRequest(payload, overrides = null) {
   if (
     overrides?.authService ||
     overrides?.policyService ||
+    overrides?.policyGrantStore ||
     overrides?.queryExecutionService ||
     overrides?.receiptService ||
     overrides?.auditService ||
@@ -446,6 +674,7 @@ export async function handleQueryRequest(payload, overrides = null) {
     const queryService = createQueryService({
       authService: overrides.authService || createAuthService(runtimeConfig.auth),
       policyService: overrides.policyService || createPolicyService(runtimeConfig.policy),
+      policyGrantStore: overrides.policyGrantStore || createNoopPolicyGrantStore(),
       queryExecutionService:
         overrides.queryExecutionService ||
         createQueryExecutionService({
