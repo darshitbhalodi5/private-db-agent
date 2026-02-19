@@ -29,7 +29,7 @@ import { handleRuntimeAttestationStatus } from './routes/runtime.js';
 import { sendJson } from './lib/http.js';
 import { createDemoScenarioService } from './services/demoScenarioService.js';
 import { createLogger } from './services/loggerService.js';
-import { getRuntimeMetricsService } from './services/metricsService.js';
+import { getRuntimeMetricsService, inferRequestDecisionTelemetry } from './services/metricsService.js';
 import { createRateLimitService } from './services/rateLimitService.js';
 import { handleOpsMetrics } from './routes/ops.js';
 
@@ -44,7 +44,7 @@ function getClientIp(req) {
   return req.socket?.remoteAddress || 'unknown';
 }
 
-function shouldApplyRateLimit(pathname) {
+export function shouldApplyRateLimit(pathname) {
   if (pathname === '/health') {
     return false;
   }
@@ -85,6 +85,177 @@ async function executeWithTimeout(fn, timeoutMs) {
   }
 }
 
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function normalizeString(value, { lowercase = false } = {}) {
+  if (!isNonEmptyString(value)) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return lowercase ? trimmed.toLowerCase() : trimmed;
+}
+
+function firstNonEmptyString(candidates = [], { lowercase = false } = {}) {
+  for (const candidate of candidates) {
+    const normalized = normalizeString(candidate, { lowercase });
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+export function resolveRouteAction(method, pathname) {
+  if (method === 'GET' && pathname === '/health') {
+    return 'health:read';
+  }
+
+  if (method === 'GET' && pathname === '/v1/ops/metrics') {
+    return 'ops:metrics:read';
+  }
+
+  if (method === 'POST' && pathname === '/v1/query') {
+    return 'query:execute';
+  }
+
+  if (
+    method === 'GET' &&
+    (pathname === '/.well-known/agent-card.json' || pathname === '/v1/a2a/agent-card')
+  ) {
+    return 'a2a:agent-card:read';
+  }
+
+  if (method === 'GET' && pathname === '/v1/a2a/contracts') {
+    return 'a2a:contracts:read';
+  }
+
+  if (method === 'POST' && pathname === '/v1/a2a/tasks') {
+    return 'a2a:task:create';
+  }
+
+  if (method === 'GET' && pathname === '/v1/a2a/tasks') {
+    return 'a2a:task:list';
+  }
+
+  if (method === 'GET' && /^\/v1\/a2a\/tasks\/[^/]+$/.test(pathname)) {
+    return 'a2a:task:get';
+  }
+
+  if (method === 'GET' && pathname === '/v1/runtime/attestation') {
+    return 'runtime:attestation:read';
+  }
+
+  if (method === 'POST' && pathname === '/v1/control-plane/submit') {
+    return 'schema:submit';
+  }
+
+  if (method === 'POST' && pathname === '/v1/control-plane/apply') {
+    return 'schema:apply';
+  }
+
+  if (method === 'POST' && pathname === '/v1/ai/schema-draft') {
+    return 'ai:schema:draft';
+  }
+
+  if (method === 'POST' && pathname === '/v1/ai/policy-draft') {
+    return 'ai:policy:draft';
+  }
+
+  if (method === 'POST' && pathname === '/v1/ai/approve-draft') {
+    return 'ai:draft:approve';
+  }
+
+  if (method === 'POST' && pathname === '/v1/data/execute') {
+    return 'data:execute';
+  }
+
+  if (method === 'GET' && pathname === '/v1/policy/grants') {
+    return 'policy:grant:list';
+  }
+
+  if (method === 'POST' && pathname === '/v1/policy/grants') {
+    return 'policy:grant:create';
+  }
+
+  if (method === 'POST' && pathname === '/v1/policy/grants/revoke') {
+    return 'policy:grant:revoke';
+  }
+
+  if (method === 'POST' && pathname === '/v1/policy/preview-decision') {
+    return 'policy:preview:decision';
+  }
+
+  if (method === 'GET' && pathname === '/v1/demo/scenarios') {
+    return 'demo:scenarios';
+  }
+
+  if (method === 'GET' && pathname === '/v1/demo/payload') {
+    return 'demo:payload';
+  }
+
+  if (method === 'GET' && (pathname === '/demo' || pathname === '/')) {
+    return 'demo:page';
+  }
+
+  return pathname.startsWith('/v1/') ? 'api:unknown' : 'public:unknown';
+}
+
+function resolveActorWallet(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null;
+  }
+
+  return firstNonEmptyString(
+    [
+      payload.actorWallet,
+      payload.requester,
+      payload.walletAddress,
+      payload.creator?.walletAddress,
+      payload.submission?.creatorWalletAddress,
+      payload.authorization?.actorWallet,
+      payload.approval?.approvedBy
+    ],
+    { lowercase: true }
+  );
+}
+
+function resolveTenantId(payload, requestUrl) {
+  const queryTenant = requestUrl?.searchParams?.get('tenantId');
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return normalizeString(queryTenant, { lowercase: true });
+  }
+
+  return firstNonEmptyString(
+    [payload.tenantId, payload.submission?.tenantId, payload.draft?.tenantId, queryTenant],
+    { lowercase: true }
+  );
+}
+
+export function collectLogContext({ req, requestUrl, method, pathname, payload, statusCode }) {
+  const requestPayload =
+    req?.__parsedJsonBody && typeof req.__parsedJsonBody === 'object' ? req.__parsedJsonBody : null;
+  const action = resolveRouteAction(method, pathname);
+  const actorWallet = resolveActorWallet(requestPayload) || resolveActorWallet(payload);
+  const tenantId = resolveTenantId(requestPayload, requestUrl) || resolveTenantId(payload, requestUrl);
+  const decision = inferRequestDecisionTelemetry({
+    statusCode,
+    payload,
+    path: pathname,
+    action
+  });
+
+  return {
+    action,
+    actorWallet,
+    tenantId,
+    decision
+  };
+}
+
 export function createServer(
   config = loadConfig(),
   {
@@ -105,6 +276,7 @@ export function createServer(
     const pathname = requestUrl.pathname;
     const method = req.method || 'GET';
     const clientIp = getClientIp(req);
+    const action = resolveRouteAction(method, pathname);
     const requestStartMs = Date.now();
     const correlationIdHeader = req.headers['x-correlation-id'];
     const correlationId =
@@ -114,7 +286,8 @@ export function createServer(
     req.context = {
       correlationId,
       apiVersion: 'v1',
-      maxJsonBodyBytes: config.security.maxJsonBodyBytes
+      maxJsonBodyBytes: config.security.maxJsonBodyBytes,
+      action
     };
     res.setHeader('x-correlation-id', correlationId);
     res.setHeader('x-api-version', 'v1');
@@ -126,20 +299,37 @@ export function createServer(
       correlationId,
       method,
       path: pathname,
-      clientIp
+      clientIp,
+      action,
+      actorWallet: null,
+      tenantId: null,
+      outcome: 'pending'
     });
 
     res.on('finish', () => {
       const durationMs = Math.max(0, Date.now() - requestStartMs);
       const payload = res.__responsePayload || null;
+      let requestLogContext = collectLogContext({
+        req,
+        requestUrl,
+        method,
+        pathname,
+        payload,
+        statusCode: res.statusCode
+      });
       if (config.observability.metricsEnabled) {
-        metricsService.recordHttpRequest({
+        const metricDecision = metricsService.recordHttpRequest({
           method,
           path: pathname,
           statusCode: res.statusCode,
           durationMs,
-          payload
+          payload,
+          action: requestLogContext.action
         });
+        requestLogContext = {
+          ...requestLogContext,
+          decision: metricDecision
+        };
       }
 
       logger.info('http.request.complete', {
@@ -147,7 +337,13 @@ export function createServer(
         method,
         path: pathname,
         statusCode: res.statusCode,
-        durationMs
+        durationMs,
+        action: requestLogContext.action,
+        actorWallet: requestLogContext.actorWallet,
+        tenantId: requestLogContext.tenantId,
+        outcome: requestLogContext.decision.outcome,
+        decisionStage: requestLogContext.decision.stage,
+        denyReason: requestLogContext.decision.denyReason
       });
     });
 
@@ -181,11 +377,24 @@ export function createServer(
               method
             });
           }
+          const timeoutLogContext = collectLogContext({
+            req,
+            requestUrl,
+            method,
+            pathname,
+            payload: res.__responsePayload || null,
+            statusCode: 504
+          });
           logger.warn('http.request.timeout', {
             correlationId,
             method,
             path: pathname,
-            timeoutMs: config.security.requestTimeoutMs
+            timeoutMs: config.security.requestTimeoutMs,
+            action: timeoutLogContext.action,
+            actorWallet: timeoutLogContext.actorWallet,
+            tenantId: timeoutLogContext.tenantId,
+            outcome: 'deny',
+            denyReason: 'REQUEST_TIMEOUT'
           });
           if (!res.writableEnded) {
             sendJson(res, 504, {
@@ -196,10 +405,23 @@ export function createServer(
           return;
         }
 
+        const errorLogContext = collectLogContext({
+          req,
+          requestUrl,
+          method,
+          pathname,
+          payload: res.__responsePayload || null,
+          statusCode: 500
+        });
         logger.error('http.request.unhandled_error', {
           correlationId,
           method,
           path: pathname,
+          action: errorLogContext.action,
+          actorWallet: errorLogContext.actorWallet,
+          tenantId: errorLogContext.tenantId,
+          outcome: 'deny',
+          denyReason: 'INTERNAL_SERVER_ERROR',
           error: error?.message || 'Unknown error'
         });
         if (!res.writableEnded) {

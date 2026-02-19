@@ -31,13 +31,17 @@ export async function readJsonBody(req, { maxBytes } = {}) {
   }
 
   if (chunks.length === 0) {
-    return {};
+    const emptyPayload = {};
+    req.__parsedJsonBody = emptyPayload;
+    return emptyPayload;
   }
 
   const raw = Buffer.concat(chunks).toString('utf-8');
 
   try {
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    req.__parsedJsonBody = parsed;
+    return parsed;
   } catch {
     throw createBodyReadError('INVALID_JSON', 'Request body must be valid JSON.');
   }
