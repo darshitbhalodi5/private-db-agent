@@ -108,3 +108,61 @@ test('file source reads and validates attestation document', async () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 });
+
+test('enforce mode denies sensitive action when pinned claim does not match attested value', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'runtime-attestation-pinned-claim-'));
+  const attestationPath = path.join(tempDir, 'attestation.json');
+
+  await fs.writeFile(
+    attestationPath,
+    JSON.stringify(
+      {
+        attestation: {
+          appId: 'app-file',
+          imageDigest: 'sha256:file-image',
+          attestationReportHash: 'sha256:file-report',
+          onchainDeploymentTxHash: '0xdef',
+          issuedAt: '2026-02-18T00:00:00.000Z',
+          expiresAt: '2026-02-18T00:30:00.000Z'
+        }
+      },
+      null,
+      2
+    ),
+    'utf8'
+  );
+
+  try {
+    const service = createRuntimeAttestationService(
+      {
+        runtimeVerificationMode: 'enforce',
+        attestationSource: 'file',
+        attestationFilePath: attestationPath,
+        attestationMaxAgeSeconds: 1800,
+        runtime: {
+          appId: 'app-file',
+          imageDigest: 'sha256:different-image-digest'
+        }
+      },
+      {
+        now: () => Date.parse('2026-02-18T00:10:00.000Z')
+      }
+    );
+
+    const check = await service.checkAccess({
+      action: 'schema:apply',
+      sensitive: true
+    });
+
+    assert.equal(check.allowed, false);
+    assert.equal(check.statusCode, 503);
+    assert.equal(check.code, 'RUNTIME_VERIFICATION_FAILED');
+    assert.equal(check.snapshot.verified, false);
+    assert.equal(
+      check.snapshot.issues.some((issue) => issue.code === 'IMAGE_DIGEST_MISMATCH'),
+      true
+    );
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});

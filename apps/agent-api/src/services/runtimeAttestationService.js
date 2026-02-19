@@ -138,6 +138,89 @@ function evaluateClaimsVerification(claims, { nowMs, maxAgeSeconds }) {
   };
 }
 
+const PINNED_CLAIM_FIELDS = Object.freeze([
+  'appId',
+  'imageDigest',
+  'attestationReportHash',
+  'onchainDeploymentTxHash'
+]);
+
+function normalizeClaimForComparison(field, value) {
+  if (!isNonEmptyString(value)) {
+    return null;
+  }
+
+  if (
+    field === 'imageDigest' ||
+    field === 'attestationReportHash' ||
+    field === 'onchainDeploymentTxHash'
+  ) {
+    return value.trim().toLowerCase();
+  }
+
+  return value.trim();
+}
+
+function formatClaimName(field) {
+  if (field === 'appId') {
+    return 'appId';
+  }
+  if (field === 'imageDigest') {
+    return 'imageDigest';
+  }
+  if (field === 'attestationReportHash') {
+    return 'attestationReportHash';
+  }
+  if (field === 'onchainDeploymentTxHash') {
+    return 'onchainDeploymentTxHash';
+  }
+  return field;
+}
+
+function toIssueCodeForClaimMismatch(field) {
+  if (field === 'appId') {
+    return 'APP_ID_MISMATCH';
+  }
+  if (field === 'imageDigest') {
+    return 'IMAGE_DIGEST_MISMATCH';
+  }
+  if (field === 'attestationReportHash') {
+    return 'ATTESTATION_REPORT_HASH_MISMATCH';
+  }
+  if (field === 'onchainDeploymentTxHash') {
+    return 'ONCHAIN_DEPLOYMENT_TX_HASH_MISMATCH';
+  }
+  return `CLAIM_MISMATCH_${String(field || 'unknown').toUpperCase()}`;
+}
+
+function evaluatePinnedClaimsVerification(actualClaims, expectedClaims) {
+  const issues = [];
+  const expected = expectedClaims || {};
+  const actual = actualClaims || {};
+
+  for (const field of PINNED_CLAIM_FIELDS) {
+    const expectedValue = normalizeClaimForComparison(field, expected[field]);
+    if (expectedValue === null) {
+      continue;
+    }
+
+    const actualValue = normalizeClaimForComparison(field, actual[field]);
+    if (actualValue === null || actualValue !== expectedValue) {
+      issues.push(
+        buildIssue(
+          toIssueCodeForClaimMismatch(field),
+          `Pinned claim '${formatClaimName(field)}' does not match expected runtime value.`
+        )
+      );
+    }
+  }
+
+  return {
+    verified: issues.length === 0,
+    issues
+  };
+}
+
 function buildSnapshot({
   verificationMode,
   attestationSource,
@@ -327,10 +410,15 @@ export function createRuntimeAttestationService(
     }
 
     const normalizedClaims = normalizeClaims(sourceResult.payload);
-    const verification = evaluateClaimsVerification(normalizedClaims, {
+    const freshnessVerification = evaluateClaimsVerification(normalizedClaims, {
       nowMs: Date.parse(checkedAt),
       maxAgeSeconds: attestationMaxAgeSeconds
     });
+    const pinnedClaimVerification = evaluatePinnedClaimsVerification(normalizedClaims, staticClaims);
+    const verification = {
+      verified: freshnessVerification.verified && pinnedClaimVerification.verified,
+      issues: [...freshnessVerification.issues, ...pinnedClaimVerification.issues]
+    };
 
     return buildSnapshot({
       verificationMode,
