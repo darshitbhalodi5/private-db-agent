@@ -123,10 +123,18 @@ test('loadConfig returns default values including database settings', () => {
   assert.equal(config.ai.enabled, true);
   assert.equal(config.ai.provider, 'mock');
   assert.equal(config.ai.model, 'eigen-ai-mock-v1');
+  assert.equal(config.ai.baseUrl, '');
+  assert.equal(config.ai.apiKey, '');
+  assert.equal(config.ai.requestTimeoutMs, 15000);
+  assert.equal(config.ai.schemaDraftPath, '/v1/schema-draft');
+  assert.equal(config.ai.policyDraftPath, '/v1/policy-draft');
+  assert.deepEqual(config.ai.requestHeaders, {});
   assert.equal(typeof config.ai.signerPrivateKey, 'string');
   assert.equal(config.a2a.enabled, true);
   assert.equal(config.a2a.allowUnsigned, false);
+  assert.equal(config.a2a.signatureScheme, 'hmac-sha256');
   assert.equal(config.a2a.sharedSecret, '');
+  assert.deepEqual(config.a2a.agentSignerRegistry, {});
   assert.deepEqual(config.a2a.allowedAgentIds, []);
   assert.deepEqual(config.a2a.adminAgentIds, []);
   assert.deepEqual(config.a2a.taskAllowlist, {});

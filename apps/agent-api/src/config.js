@@ -226,8 +226,26 @@ export function loadConfig(env = process.env) {
     },
     ai: {
       enabled: parseBoolean(env.AI_ENABLED, true),
-      provider: parseEnum('AI_PROVIDER', env.AI_PROVIDER, ['mock'], 'mock'),
+      provider: parseEnum('AI_PROVIDER', env.AI_PROVIDER, ['mock', 'eigen'], 'mock'),
       model: parseString('AI_MODEL', env.AI_MODEL, 'eigen-ai-mock-v1'),
+      baseUrl: parseString('AI_BASE_URL', env.AI_BASE_URL, ''),
+      apiKey: parseString('AI_API_KEY', env.AI_API_KEY, ''),
+      requestTimeoutMs: parsePositiveInteger(
+        'AI_REQUEST_TIMEOUT_MS',
+        env.AI_REQUEST_TIMEOUT_MS,
+        15000
+      ),
+      schemaDraftPath: parseString(
+        'AI_SCHEMA_DRAFT_PATH',
+        env.AI_SCHEMA_DRAFT_PATH,
+        '/v1/schema-draft'
+      ),
+      policyDraftPath: parseString(
+        'AI_POLICY_DRAFT_PATH',
+        env.AI_POLICY_DRAFT_PATH,
+        '/v1/policy-draft'
+      ),
+      requestHeaders: parseJsonObject('AI_REQUEST_HEADERS_JSON', env.AI_REQUEST_HEADERS_JSON) || {},
       signerPrivateKey: parseString(
         'AI_SIGNER_PRIVATE_KEY',
         env.AI_SIGNER_PRIVATE_KEY,
@@ -238,7 +256,15 @@ export function loadConfig(env = process.env) {
     a2a: {
       enabled: parseBoolean(env.A2A_ENABLED, true),
       allowUnsigned: parseBoolean(env.A2A_ALLOW_UNSIGNED, false),
+      signatureScheme: parseEnum(
+        'A2A_SIGNATURE_SCHEME',
+        env.A2A_SIGNATURE_SCHEME,
+        ['hmac-sha256', 'evm-personal-sign'],
+        'hmac-sha256'
+      ),
       sharedSecret: parseString('A2A_SHARED_SECRET', env.A2A_SHARED_SECRET, ''),
+      agentSignerRegistry:
+        parseJsonObject('A2A_AGENT_SIGNERS_JSON', env.A2A_AGENT_SIGNERS_JSON) || {},
       allowedAgentIds: parseCsvList(env.A2A_ALLOWED_AGENT_IDS),
       adminAgentIds: parseCsvList(env.A2A_ADMIN_AGENT_IDS),
       taskAllowlist: parseJsonObject('A2A_TASK_ALLOWLIST_JSON', env.A2A_TASK_ALLOWLIST_JSON) || {},

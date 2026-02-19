@@ -60,11 +60,17 @@ services:
 
       A2A_ENABLED: "true"
       A2A_ALLOW_UNSIGNED: "false"
+      A2A_SIGNATURE_SCHEME: hmac-sha256
       A2A_SHARED_SECRET: demo-a2a-secret
+      A2A_AGENT_SIGNERS_JSON: '{"demo-agent":"0x0000000000000000000000000000000000001234"}'
       A2A_ALLOWED_AGENT_IDS: demo-agent,orchestrator-agent
       A2A_ADMIN_AGENT_IDS: orchestrator-agent
       A2A_NONCE_TTL_SECONDS: "300"
       A2A_MAX_FUTURE_SKEW_SECONDS: "60"
+
+      AI_ENABLED: "true"
+      AI_PROVIDER: mock
+      AI_MODEL: eigen-ai-mock-v1
 
       LOG_LEVEL: info
       METRICS_ENABLED: "true"
