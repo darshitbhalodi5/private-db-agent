@@ -60,10 +60,17 @@ Start API + Postgres with seeded data:
 npm run docker:up
 ```
 
+Docker host port defaults to `8080`. Override when needed:
+
+```bash
+APP_HOST_PORT=18080 docker compose up -d --build
+```
+
 Run smoke checks:
 
 ```bash
-npm run demo:smoke
+node scripts/demo-smoke.mjs http://localhost:<port>
+node scripts/submission-smoke.mjs http://localhost:<port>
 ```
 
 Stop and cleanup:
@@ -319,6 +326,11 @@ Structured logging:
 
 - JSON request lifecycle logs with:
   - correlation ID
+  - actor wallet
+  - tenant ID
+  - action
+  - outcome
+  - deny reason (for denied requests)
   - method/path
   - status code
   - duration
@@ -327,7 +339,9 @@ Metrics captured:
 
 - `http_requests_total` (method/path/status)
 - `http_request_duration_ms`
-- `decision_outcomes_total` (allow/deny + reason)
+- `decision_outcomes_total` (outcome + reason + stage + domain + action)
+- `action_decision_outcomes_total` (for `data`, `schema`, `policy`, `ai` routes)
+- `action_deny_reasons_total` (for denied `data`, `schema`, `policy`, `ai` routes)
 - `migration_apply_duration_ms`
 - `rate_limited_total`
 - `request_timeouts_total`
@@ -350,8 +364,11 @@ Secret hygiene/rotation:
 
 Final smoke/demo commands:
 
-- `node scripts/demo-smoke.mjs http://localhost:8080`
-- `node scripts/submission-smoke.mjs http://localhost:8080`
+- `npm test`
+- `npm run build`
+- `APP_HOST_PORT=18080 docker compose up -d --build` (or `8080` when free)
+- `node scripts/demo-smoke.mjs http://localhost:<port>`
+- `node scripts/submission-smoke.mjs http://localhost:<port>`
 - `bash scripts/start-docker-demo.sh`
 
 Task 10 smoke coverage:

@@ -13,8 +13,8 @@
 - [x] A2A agent card and task lifecycle endpoints.
 - [x] Idempotency keys and replay-safe A2A task handling.
 - [x] Agent-to-agent authentication/authorization controls.
-- [x] Structured request logging with correlation IDs.
-- [x] Ops metrics endpoint (`/v1/ops/metrics`) with decision/migration telemetry.
+- [x] Structured request logging with correlation ID, actor wallet, tenant, action, and outcome fields.
+- [x] Ops metrics endpoint (`/v1/ops/metrics`) with decision, deny-reason, and migration telemetry.
 - [x] Rate limiting, JSON body size limits, and timeout guards.
 - [x] Secret rotation and config hygiene notes in docs.
 
@@ -38,6 +38,16 @@
 
 ```bash
 npm test
+npm run build
+APP_HOST_PORT=18080 docker compose up -d --build
+node scripts/demo-smoke.mjs http://localhost:18080
+node scripts/submission-smoke.mjs http://localhost:18080
+```
+
+If `8080` is available, use:
+
+```bash
+APP_HOST_PORT=8080 docker compose up -d --build
 node scripts/demo-smoke.mjs http://localhost:8080
 node scripts/submission-smoke.mjs http://localhost:8080
 ```

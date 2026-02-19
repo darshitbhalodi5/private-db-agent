@@ -4,53 +4,124 @@
 
 Demonstrate end-to-end private database access flow with signed requests, policy enforcement, template-constrained queries, and cryptographic receipts.
 
-## Quick Start (Docker)
+## Port Selection
 
-1. Start the full stack:
+Docker maps host port using `APP_HOST_PORT`:
+
+- Default host port: `8080`
+- If `8080` is busy, use another host port (example: `18080`)
 
 ```bash
+export APP_HOST_PORT="${APP_HOST_PORT:-8080}"
+export BASE_URL="http://localhost:${APP_HOST_PORT}"
+```
+
+## Quick Start (Docker)
+
+1. Run tests before demo:
+
+```bash
+npm test
+```
+
+Expected result:
+
+- All test suites pass.
+
+2. Build all workspaces:
+
+```bash
+npm run build
+```
+
+Expected result:
+
+- Build completes without errors.
+
+3. Start the full stack:
+
+```bash
+export APP_HOST_PORT="${APP_HOST_PORT:-8080}"
 docker compose up -d --build
 ```
 
-2. Verify API health:
+4. Verify API health:
 
 ```bash
-curl -s http://localhost:8080/health
+curl -s "${BASE_URL}/health"
 ```
 
-3. Open demo UI:
+Expected result:
 
-- http://localhost:8080/demo
+- HTTP `200`
+- Response includes `"status":"ok"`
 
-4. Optional automated scenario verification:
+5. Open demo UI:
+
+- `${BASE_URL}/demo`
+
+6. Run automated matrix verification:
 
 ```bash
-node scripts/demo-smoke.mjs http://localhost:8080
+node scripts/demo-smoke.mjs "${BASE_URL}"
 ```
 
-5. Run final submission smoke verification:
+Expected result:
+
+- Script exits `0`
+- JSON output contains `totals.failed: 0`
+
+7. Run final submission smoke verification:
 
 ```bash
-node scripts/submission-smoke.mjs http://localhost:8080
+node scripts/submission-smoke.mjs "${BASE_URL}"
 ```
 
-6. Verify runtime attestation status:
+Expected result:
+
+- Script exits `0`
+- JSON output contains `totals.fail: 0`
+
+8. Verify runtime attestation status:
 
 ```bash
-curl -s http://localhost:8080/v1/runtime/attestation
+curl -s "${BASE_URL}/v1/runtime/attestation"
 ```
 
-7. Verify A2A agent discovery endpoint:
+Expected result:
+
+- HTTP `200`
+- JSON includes `runtime.verificationStatus` and `runtime.claimsHash`
+
+9. Verify A2A agent discovery endpoint:
 
 ```bash
-curl -s http://localhost:8080/.well-known/agent-card.json
+curl -s "${BASE_URL}/.well-known/agent-card.json"
 ```
 
-8. Verify ops metrics endpoint:
+Expected result:
+
+- HTTP `200`
+- JSON includes:
+  - `code: "A2A_AGENT_CARD"`
+  - `agentCard.protocolVersion`
+  - `agentCard.endpoints`
+
+10. Verify ops metrics endpoint:
 
 ```bash
-curl -s http://localhost:8080/v1/ops/metrics
+curl -s "${BASE_URL}/v1/ops/metrics"
 ```
+
+Expected result:
+
+- HTTP `200`
+- JSON includes counters for:
+  - `decision_outcomes_total`
+  - `action_decision_outcomes_total`
+  - `action_deny_reasons_total`
+  - `rate_limited_total`
+  - `request_timeouts_total`
 
 ## Demo Scenarios
 
@@ -82,7 +153,7 @@ curl -s http://localhost:8080/v1/ops/metrics
 - `PROOF_RUNTIME_VERIFICATION_MODE=enforce` denies sensitive operations when attestation verification fails.
 5. Highlight `audit` status for each run.
 6. Show `access_log_recent` query from the API (or via scenario results) to prove persistence.
-7. Run `node scripts/submission-smoke.mjs http://localhost:8080` and show:
+7. Run `node scripts/submission-smoke.mjs "${BASE_URL}"` and show:
 - allow/deny scenario checks
 - A2A task create/replay/conflict checks
 - runtime and metrics endpoint checks

@@ -10,11 +10,12 @@
 ## Current Limitations
 
 1. Metrics are in-memory and reset on process restart (no long-term telemetry backend in this milestone).
-2. Rate limiting is in-memory and per-instance (not globally coordinated across replicas).
-3. A2A task execution is synchronous within request lifecycle (no async worker queue in this milestone).
-4. A2A authentication uses HMAC shared secret; mutual TLS / asymmetric agent identities are not yet implemented.
-5. Runtime attestation verification supports configured/file/url sources but does not validate external trust roots on-chain.
-6. Secret rotation cadence is documented but not automatically enforced by a secret manager integration.
+2. Structured logs include correlation/actor/tenant/action/outcome fields, but are emitted to process stdout and are not persisted without an external log backend.
+3. Rate limiting is in-memory and per-instance (not globally coordinated across replicas).
+4. A2A task execution is synchronous within request lifecycle (no async worker queue in this milestone).
+5. A2A authentication uses HMAC shared secret; mutual TLS / asymmetric agent identities are not yet implemented.
+6. Runtime attestation verification supports configured/file/url sources but does not validate external trust roots on-chain.
+7. Secret rotation cadence is documented but not automatically enforced by a secret manager integration.
 
 ## Operational Notes
 
