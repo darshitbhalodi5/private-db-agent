@@ -1,8 +1,14 @@
 import { loadConfig } from '../config.js';
 import { createDatabaseAdapter } from '../db/databaseAdapterFactory.js';
+import {
+  attachActionResponseEnvelope,
+  createNoopAuditService
+} from './actionResponseEnvelopeService.js';
 import { createActionAuthorizationService } from './actionAuthorizationService.js';
+import { createAuditService } from './auditService.js';
 import { createPolicyGrantStore } from './policyGrantStore.js';
 import { createPolicyMutationAuthService } from './policyMutationAuthService.js';
+import { createReceiptService } from './receiptService.js';
 import {
   createPermissiveRuntimeAttestationService,
   createRuntimeAttestationService
@@ -567,7 +573,72 @@ export function createDataOperationService({
 }
 
 const runtimeConfig = loadConfig();
+const runtimeMetadata = {
+  serviceName: runtimeConfig.serviceName,
+  version: runtimeConfig.version,
+  nodeEnv: runtimeConfig.nodeEnv
+};
+const defaultReceiptService = createReceiptService(runtimeConfig.proof, runtimeMetadata);
+const defaultAuditService = createNoopAuditService();
 let runtimeDataOperationServicePromise = null;
+
+function buildExecutionContext(result) {
+  const body = result?.body || {};
+  return {
+    ok: Number.isInteger(result?.statusCode) ? result.statusCode < 400 : false,
+    code: body.code || body.error || null,
+    data: {
+      rowCount: Number.isInteger(body.rowCount) ? body.rowCount : 0,
+      rows: Array.isArray(body.rows) ? body.rows : []
+    }
+  };
+}
+
+function buildPolicyContext(result) {
+  const allowDecision = result?.body?.authorization?.decision;
+  const denyDecision = result?.body?.details?.decision;
+  const decision = allowDecision || denyDecision || null;
+  if (!decision || typeof decision !== 'object') {
+    return null;
+  }
+
+  return {
+    allowed: typeof decision.allowed === 'boolean' ? decision.allowed : null,
+    code: decision.code || null
+  };
+}
+
+async function attachDataOperationEnvelope({
+  payload,
+  result,
+  databaseDialect = 'unknown',
+  receiptService = defaultReceiptService,
+  auditService = defaultAuditService
+}) {
+  return attachActionResponseEnvelope({
+    payload,
+    result,
+    auth: {
+      ok: Number.isInteger(result?.statusCode) ? result.statusCode < 400 : false,
+      requester: result?.body?.authorization?.actorWallet || payload?.actorWallet || null,
+      code: result?.body?.error || result?.body?.code || null
+    },
+    policy: buildPolicyContext(result),
+    execution: buildExecutionContext(result),
+    runtimeVerification: result?.body?.runtime || null,
+    auditContext: {
+      action: 'data:execute',
+      resource:
+        (typeof payload?.tableName === 'string' && payload.tableName.trim().length > 0
+          ? payload.tableName.trim().toLowerCase()
+          : null) || result?.body?.tableName || null,
+      requester: payload?.actorWallet || result?.body?.authorization?.actorWallet || null
+    },
+    receiptService,
+    auditService,
+    databaseDialect
+  });
+}
 
 async function buildRuntimeDataOperationService() {
   const databaseAdapter = await createDatabaseAdapter(runtimeConfig.database);
@@ -579,15 +650,20 @@ async function buildRuntimeDataOperationService() {
   });
   const runtimeAttestationService = createRuntimeAttestationService(runtimeConfig.proof);
 
-  return createDataOperationService({
-    databaseAdapter,
-    grantStore,
-    actionAuthorizationService: createActionAuthorizationService({
+  return {
+    service: createDataOperationService({
+      databaseAdapter,
       grantStore,
-      mutationAuthService
+      actionAuthorizationService: createActionAuthorizationService({
+        grantStore,
+        mutationAuthService
+      }),
+      runtimeAttestationService
     }),
-    runtimeAttestationService
-  });
+    databaseDialect: databaseAdapter.dialect || 'unknown',
+    receiptService: defaultReceiptService,
+    auditService: createAuditService({ databaseAdapter })
+  };
 }
 
 async function getRuntimeDataOperationService() {
@@ -603,15 +679,39 @@ async function getRuntimeDataOperationService() {
 
 export async function handleDataOperationRequest(payload, overrides = null) {
   try {
-    const service = overrides?.dataOperationService || (await getRuntimeDataOperationService());
-    return service.execute(payload);
+    if (overrides?.dataOperationService) {
+      const result = await overrides.dataOperationService.execute(payload);
+      return attachDataOperationEnvelope({
+        payload,
+        result,
+        databaseDialect: overrides.databaseDialect || 'unknown',
+        receiptService: overrides.receiptService || defaultReceiptService,
+        auditService: overrides.auditService || defaultAuditService
+      });
+    }
+
+    const runtimeContext = await getRuntimeDataOperationService();
+    const result = await runtimeContext.service.execute(payload);
+    return attachDataOperationEnvelope({
+      payload,
+      result,
+      databaseDialect: runtimeContext.databaseDialect,
+      receiptService: runtimeContext.receiptService,
+      auditService: runtimeContext.auditService
+    });
   } catch (error) {
-    return {
-      statusCode: 503,
-      body: {
-        error: 'SERVICE_UNAVAILABLE',
-        message: error?.message || 'Data operation service failed to initialize.'
-      }
-    };
+    return attachDataOperationEnvelope({
+      payload,
+      result: {
+        statusCode: 503,
+        body: {
+          error: 'SERVICE_UNAVAILABLE',
+          message: error?.message || 'Data operation service failed to initialize.'
+        }
+      },
+      databaseDialect: overrides?.databaseDialect || 'unknown',
+      receiptService: overrides?.receiptService || defaultReceiptService,
+      auditService: overrides?.auditService || defaultAuditService
+    });
   }
 }

@@ -1,10 +1,16 @@
 import { loadConfig } from '../config.js';
 import { createDatabaseAdapter } from '../db/databaseAdapterFactory.js';
+import {
+  attachActionResponseEnvelope,
+  createNoopAuditService
+} from './actionResponseEnvelopeService.js';
 import { createActionAuthorizationService } from './actionAuthorizationService.js';
 import { createAiDraftStore } from './aiDraftStore.js';
+import { createAuditService } from './auditService.js';
 import { createMigrationRunnerService } from './migrationRunnerService.js';
 import { createPolicyGrantStore } from './policyGrantStore.js';
 import { createPolicyMutationAuthService } from './policyMutationAuthService.js';
+import { createReceiptService } from './receiptService.js';
 import {
   createPermissiveRuntimeAttestationService,
   createRuntimeAttestationService
@@ -221,7 +227,71 @@ export function createSchemaApplyService({
 }
 
 const runtimeConfig = loadConfig();
+const runtimeMetadata = {
+  serviceName: runtimeConfig.serviceName,
+  version: runtimeConfig.version,
+  nodeEnv: runtimeConfig.nodeEnv
+};
+const defaultReceiptService = createReceiptService(runtimeConfig.proof, runtimeMetadata);
+const defaultAuditService = createNoopAuditService();
 let runtimeSchemaApplyServicePromise = null;
+
+function buildExecutionContext(result) {
+  return {
+    ok: Number.isInteger(result?.statusCode) ? result.statusCode < 400 : false,
+    code: result?.body?.code || result?.body?.error || null,
+    data: {
+      rowCount: Number.isInteger(result?.body?.migration?.stepCount) ? result.body.migration.stepCount : 0,
+      rows: []
+    }
+  };
+}
+
+function buildPolicyContext(result) {
+  const allowDecision = result?.body?.authorization?.decision;
+  const denyDecision = result?.body?.details?.decision;
+  const decision = allowDecision || denyDecision || null;
+  if (!decision || typeof decision !== 'object') {
+    return null;
+  }
+
+  return {
+    allowed: typeof decision.allowed === 'boolean' ? decision.allowed : null,
+    code: decision.code || null
+  };
+}
+
+async function attachSchemaApplyEnvelope({
+  payload,
+  result,
+  databaseDialect = 'unknown',
+  receiptService = defaultReceiptService,
+  auditService = defaultAuditService
+}) {
+  return attachActionResponseEnvelope({
+    payload,
+    result,
+    auth: {
+      ok: Number.isInteger(result?.statusCode) ? result.statusCode < 400 : false,
+      requester: result?.body?.authorization?.actorWallet || payload?.actorWallet || null,
+      code: result?.body?.error || result?.body?.code || null
+    },
+    policy: buildPolicyContext(result),
+    execution: buildExecutionContext(result),
+    runtimeVerification: result?.body?.runtime || null,
+    auditContext: {
+      action: 'schema:apply',
+      resource:
+        (typeof payload?.database?.name === 'string' && payload.database.name.trim().length > 0
+          ? payload.database.name.trim().toLowerCase()
+          : null) || null,
+      requester: payload?.actorWallet || result?.body?.authorization?.actorWallet || null
+    },
+    receiptService,
+    auditService,
+    databaseDialect
+  });
+}
 
 async function buildRuntimeSchemaApplyService() {
   const databaseAdapter = await createDatabaseAdapter(runtimeConfig.database);
@@ -237,15 +307,20 @@ async function buildRuntimeSchemaApplyService() {
     enabled: true
   });
 
-  return createSchemaApplyService({
-    migrationRunnerService,
-    actionAuthorizationService: createActionAuthorizationService({
-      grantStore,
-      mutationAuthService
+  return {
+    service: createSchemaApplyService({
+      migrationRunnerService,
+      actionAuthorizationService: createActionAuthorizationService({
+        grantStore,
+        mutationAuthService
+      }),
+      aiDraftStore,
+      runtimeAttestationService
     }),
-    aiDraftStore,
-    runtimeAttestationService
-  });
+    databaseDialect: databaseAdapter.dialect || 'unknown',
+    receiptService: defaultReceiptService,
+    auditService: createAuditService({ databaseAdapter })
+  };
 }
 
 async function getRuntimeSchemaApplyService() {
@@ -261,16 +336,40 @@ async function getRuntimeSchemaApplyService() {
 
 export async function handleSchemaApplyRequest(payload, overrides = null) {
   try {
-    const service = overrides?.schemaApplyService || (await getRuntimeSchemaApplyService());
-    return service.apply(payload);
+    if (overrides?.schemaApplyService) {
+      const result = await overrides.schemaApplyService.apply(payload);
+      return attachSchemaApplyEnvelope({
+        payload,
+        result,
+        databaseDialect: overrides.databaseDialect || 'unknown',
+        receiptService: overrides.receiptService || defaultReceiptService,
+        auditService: overrides.auditService || defaultAuditService
+      });
+    }
+
+    const runtimeContext = await getRuntimeSchemaApplyService();
+    const result = await runtimeContext.service.apply(payload);
+    return attachSchemaApplyEnvelope({
+      payload,
+      result,
+      databaseDialect: runtimeContext.databaseDialect,
+      receiptService: runtimeContext.receiptService,
+      auditService: runtimeContext.auditService
+    });
   } catch (error) {
-    return {
-      statusCode: 503,
-      body: {
-        error: 'SERVICE_UNAVAILABLE',
-        message: error?.message || 'Schema apply service failed to initialize.'
-      }
-    };
+    return attachSchemaApplyEnvelope({
+      payload,
+      result: {
+        statusCode: 503,
+        body: {
+          error: 'SERVICE_UNAVAILABLE',
+          message: error?.message || 'Schema apply service failed to initialize.'
+        }
+      },
+      databaseDialect: overrides?.databaseDialect || 'unknown',
+      receiptService: overrides?.receiptService || defaultReceiptService,
+      auditService: overrides?.auditService || defaultAuditService
+    });
   }
 }
 
