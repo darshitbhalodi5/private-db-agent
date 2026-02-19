@@ -6,11 +6,17 @@ import {
 import { loadConfig } from '../config.js';
 import { createDatabaseAdapter } from '../db/databaseAdapterFactory.js';
 import {
+  attachActionResponseEnvelope,
+  createNoopAuditService
+} from './actionResponseEnvelopeService.js';
+import { createAuditService } from './auditService.js';
+import {
   evaluatePolicyDecision,
   POLICY_REQUEST_OPERATIONS
 } from './policyDecisionEngine.js';
 import { createPolicyGrantStore } from './policyGrantStore.js';
 import { createPolicyMutationAuthService } from './policyMutationAuthService.js';
+import { createReceiptService } from './receiptService.js';
 import {
   createPermissiveRuntimeAttestationService,
   createRuntimeAttestationService
@@ -717,21 +723,103 @@ export function createPolicyAdminService({
 }
 
 const runtimeConfig = loadConfig();
+const runtimeMetadata = {
+  serviceName: runtimeConfig.serviceName,
+  version: runtimeConfig.version,
+  nodeEnv: runtimeConfig.nodeEnv
+};
+const defaultReceiptService = createReceiptService(runtimeConfig.proof, runtimeMetadata);
+const defaultAuditService = createNoopAuditService();
 let runtimePolicyAdminServicePromise = null;
+
+function buildExecutionContext(result) {
+  const grants = Array.isArray(result?.body?.grants) ? result.body.grants : [];
+  return {
+    ok: Number.isInteger(result?.statusCode) ? result.statusCode < 400 : false,
+    code: result?.body?.code || result?.body?.error || null,
+    data: {
+      rowCount: grants.length,
+      rows: grants
+    }
+  };
+}
+
+function buildPolicyContext(result) {
+  if (result?.body?.actorAuthority && typeof result.body.actorAuthority === 'object') {
+    return {
+      allowed: Boolean(result.body.actorAuthority.allowed),
+      code: result.body.actorAuthority.code || null
+    };
+  }
+
+  const decision = result?.body?.details?.decision;
+  if (decision && typeof decision === 'object') {
+    return {
+      allowed: typeof decision.allowed === 'boolean' ? decision.allowed : null,
+      code: decision.code || null
+    };
+  }
+
+  return null;
+}
+
+async function attachPolicyEnvelope({
+  payload,
+  result,
+  action,
+  resource = null,
+  databaseDialect = 'unknown',
+  receiptService = defaultReceiptService,
+  auditService = defaultAuditService
+}) {
+  return attachActionResponseEnvelope({
+    payload,
+    result,
+    auth: {
+      ok: Number.isInteger(result?.statusCode) ? result.statusCode < 400 : false,
+      requester: payload?.actorWallet || null,
+      code: result?.body?.error || result?.body?.code || null
+    },
+    policy: buildPolicyContext(result),
+    execution: buildExecutionContext(result),
+    runtimeVerification: result?.body?.runtime || null,
+    auditContext: {
+      action,
+      resource,
+      requester: payload?.actorWallet || null
+    },
+    receiptService,
+    auditService,
+    databaseDialect
+  });
+}
+
+function serviceUnavailable(message) {
+  return serviceError(
+    'SERVICE_UNAVAILABLE',
+    message || 'Policy admin service failed to initialize database adapter.',
+    503
+  );
+}
 
 async function buildRuntimePolicyAdminService() {
   const databaseAdapter = await createDatabaseAdapter(runtimeConfig.database);
   const grantStore = createPolicyGrantStore({ databaseAdapter });
   await grantStore.ensureInitialized();
 
-  return createPolicyAdminService({
-    grantStore,
-    mutationAuthService: createPolicyMutationAuthService({
-      ...runtimeConfig.auth,
-      enabled: true
+  return {
+    service: createPolicyAdminService({
+      grantStore,
+      mutationAuthService: createPolicyMutationAuthService({
+        ...runtimeConfig.auth,
+        enabled: true
+      }),
+      runtimeAttestationService: createRuntimeAttestationService(runtimeConfig.proof)
     }),
-    runtimeAttestationService: createRuntimeAttestationService(runtimeConfig.proof)
-  });
+    databaseDialect: databaseAdapter.dialect || 'unknown',
+    receiptService: defaultReceiptService,
+    auditService: createAuditService({ databaseAdapter })
+  };
 }
 
 async function getRuntimePolicyAdminService() {
@@ -745,45 +833,134 @@ async function getRuntimePolicyAdminService() {
   return runtimePolicyAdminServicePromise;
 }
 
-function serviceUnavailable(message) {
-  return serviceError(
-    'SERVICE_UNAVAILABLE',
-    message || 'Policy admin service failed to initialize database adapter.',
-    503
-  );
-}
-
 export async function handleCreatePolicyGrantRequest(payload, overrides = null) {
   try {
-    const service = overrides?.policyAdminService || (await getRuntimePolicyAdminService());
-    return await service.createGrant(payload);
+    if (overrides?.policyAdminService) {
+      const result = await overrides.policyAdminService.createGrant(payload);
+      const grant = payload?.grant || {};
+      return attachPolicyEnvelope({
+        payload,
+        result,
+        action: 'policy:grant:create',
+        resource: `${grant.scopeType || 'unknown'}:${grant.scopeId || 'unknown'}:${grant.operation || 'unknown'}`,
+        databaseDialect: overrides.databaseDialect || 'unknown',
+        receiptService: overrides.receiptService || defaultReceiptService,
+        auditService: overrides.auditService || defaultAuditService
+      });
+    }
+
+    const runtimeContext = await getRuntimePolicyAdminService();
+    const result = await runtimeContext.service.createGrant(payload);
+    const grant = payload?.grant || {};
+    return attachPolicyEnvelope({
+      payload,
+      result,
+      action: 'policy:grant:create',
+      resource: `${grant.scopeType || 'unknown'}:${grant.scopeId || 'unknown'}:${grant.operation || 'unknown'}`,
+      databaseDialect: runtimeContext.databaseDialect,
+      receiptService: runtimeContext.receiptService,
+      auditService: runtimeContext.auditService
+    });
   } catch (error) {
-    return serviceUnavailable(error?.message);
+    return attachPolicyEnvelope({
+      payload,
+      result: serviceUnavailable(error?.message),
+      action: 'policy:grant:create',
+      resource: 'service',
+      databaseDialect: overrides?.databaseDialect || 'unknown',
+      receiptService: overrides?.receiptService || defaultReceiptService,
+      auditService: overrides?.auditService || defaultAuditService
+    });
   }
 }
 
 export async function handleRevokePolicyGrantRequest(payload, overrides = null) {
   try {
-    const service = overrides?.policyAdminService || (await getRuntimePolicyAdminService());
-    return await service.revokeGrant(payload);
+    if (overrides?.policyAdminService) {
+      const result = await overrides.policyAdminService.revokeGrant(payload);
+      return attachPolicyEnvelope({
+        payload,
+        result,
+        action: 'policy:grant:revoke',
+        resource: payload?.grantId || 'unknown',
+        databaseDialect: overrides.databaseDialect || 'unknown',
+        receiptService: overrides.receiptService || defaultReceiptService,
+        auditService: overrides.auditService || defaultAuditService
+      });
+    }
+
+    const runtimeContext = await getRuntimePolicyAdminService();
+    const result = await runtimeContext.service.revokeGrant(payload);
+    return attachPolicyEnvelope({
+      payload,
+      result,
+      action: 'policy:grant:revoke',
+      resource: payload?.grantId || 'unknown',
+      databaseDialect: runtimeContext.databaseDialect,
+      receiptService: runtimeContext.receiptService,
+      auditService: runtimeContext.auditService
+    });
   } catch (error) {
-    return serviceUnavailable(error?.message);
+    return attachPolicyEnvelope({
+      payload,
+      result: serviceUnavailable(error?.message),
+      action: 'policy:grant:revoke',
+      resource: payload?.grantId || 'service',
+      databaseDialect: overrides?.databaseDialect || 'unknown',
+      receiptService: overrides?.receiptService || defaultReceiptService,
+      auditService: overrides?.auditService || defaultAuditService
+    });
   }
 }
 
 export async function handleListPolicyGrantsRequest(query = {}, overrides = null) {
   try {
-    const service = overrides?.policyAdminService || (await getRuntimePolicyAdminService());
-    return await service.listGrants(query);
+    if (overrides?.policyAdminService) {
+      const result = await overrides.policyAdminService.listGrants(query);
+      return attachPolicyEnvelope({
+        payload: query,
+        result,
+        action: 'policy:grant:list',
+        resource: query?.tenantId || 'unknown',
+        databaseDialect: overrides.databaseDialect || 'unknown',
+        receiptService: overrides.receiptService || defaultReceiptService,
+        auditService: overrides.auditService || defaultAuditService
+      });
+    }
+
+    const runtimeContext = await getRuntimePolicyAdminService();
+    const result = await runtimeContext.service.listGrants(query);
+    return attachPolicyEnvelope({
+      payload: query,
+      result,
+      action: 'policy:grant:list',
+      resource: query?.tenantId || 'unknown',
+      databaseDialect: runtimeContext.databaseDialect,
+      receiptService: runtimeContext.receiptService,
+      auditService: runtimeContext.auditService
+    });
   } catch (error) {
-    return serviceUnavailable(error?.message);
+    return attachPolicyEnvelope({
+      payload: query,
+      result: serviceUnavailable(error?.message),
+      action: 'policy:grant:list',
+      resource: query?.tenantId || 'service',
+      databaseDialect: overrides?.databaseDialect || 'unknown',
+      receiptService: overrides?.receiptService || defaultReceiptService,
+      auditService: overrides?.auditService || defaultAuditService
+    });
   }
 }
 
 export async function handlePolicyPreviewDecisionRequest(payload, overrides = null) {
   try {
-    const service = overrides?.policyAdminService || (await getRuntimePolicyAdminService());
-    return await service.previewDecision(payload);
+    const runtimeContext =
+      overrides?.policyAdminService ?
+        {
+          service: overrides.policyAdminService
+        }
+      : await getRuntimePolicyAdminService();
+    return await runtimeContext.service.previewDecision(payload);
   } catch (error) {
     return serviceUnavailable(error?.message);
   }

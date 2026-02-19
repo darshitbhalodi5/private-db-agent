@@ -7,11 +7,17 @@ import {
 } from '@eigen-private-db-agent/shared-types';
 import { loadConfig } from '../config.js';
 import { createDatabaseAdapter } from '../db/databaseAdapterFactory.js';
+import {
+  attachActionResponseEnvelope,
+  createNoopAuditService
+} from './actionResponseEnvelopeService.js';
 import { createAiDraftStore } from './aiDraftStore.js';
+import { createAuditService } from './auditService.js';
 import {
   buildPolicyMutationMessage,
   createPolicyMutationAuthService
 } from './policyMutationAuthService.js';
+import { createReceiptService } from './receiptService.js';
 import { validateAndCompileSchemaDsl } from './schemaDslService.js';
 
 const TENANT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;
@@ -641,6 +647,13 @@ export function createEigenAiService({
 }
 
 const runtimeConfig = loadConfig();
+const runtimeMetadata = {
+  serviceName: runtimeConfig.serviceName,
+  version: runtimeConfig.version,
+  nodeEnv: runtimeConfig.nodeEnv
+};
+const defaultReceiptService = createReceiptService(runtimeConfig.proof, runtimeMetadata);
+const defaultAuditService = createNoopAuditService();
 let runtimeEigenAiServicePromise = null;
 
 async function buildRuntimeEigenAiService() {
@@ -648,14 +661,19 @@ async function buildRuntimeEigenAiService() {
   const aiDraftStore = createAiDraftStore({ databaseAdapter });
   await aiDraftStore.ensureInitialized();
 
-  return createEigenAiService({
-    aiConfig: runtimeConfig.ai,
-    aiDraftStore,
-    mutationAuthService: createPolicyMutationAuthService({
-      ...runtimeConfig.auth,
-      enabled: true
-    })
-  });
+  return {
+    service: createEigenAiService({
+      aiConfig: runtimeConfig.ai,
+      aiDraftStore,
+      mutationAuthService: createPolicyMutationAuthService({
+        ...runtimeConfig.auth,
+        enabled: true
+      })
+    }),
+    databaseDialect: databaseAdapter.dialect || 'unknown',
+    receiptService: defaultReceiptService,
+    auditService: createAuditService({ databaseAdapter })
+  };
 }
 
 async function getRuntimeEigenAiService() {
@@ -679,10 +697,47 @@ function serviceUnavailable(message) {
   };
 }
 
+async function attachAiApproveEnvelope({
+  payload,
+  result,
+  databaseDialect = 'unknown',
+  receiptService = defaultReceiptService,
+  auditService = defaultAuditService
+}) {
+  return attachActionResponseEnvelope({
+    payload,
+    result,
+    auth: {
+      ok: Number.isInteger(result?.statusCode) ? result.statusCode < 400 : false,
+      requester: payload?.actorWallet || result?.body?.approval?.approvedBy || null,
+      code: result?.body?.error || result?.body?.code || null
+    },
+    policy: null,
+    execution: {
+      ok: Number.isInteger(result?.statusCode) ? result.statusCode < 400 : false,
+      code: result?.body?.code || result?.body?.error || null,
+      data: {
+        rowCount: result?.body?.approval ? 1 : 0,
+        rows: result?.body?.approval ? [result.body.approval] : []
+      }
+    },
+    runtimeVerification: null,
+    auditContext: {
+      action: 'ai:draft:approve',
+      resource: payload?.draftId || null,
+      requester: payload?.actorWallet || result?.body?.approval?.approvedBy || null
+    },
+    receiptService,
+    auditService,
+    databaseDialect
+  });
+}
+
 export async function handleAiSchemaDraftRequest(payload, overrides = null) {
   try {
-    const service = overrides?.eigenAiService || (await getRuntimeEigenAiService());
-    return service.createSchemaDraft(payload);
+    const runtimeContext =
+      overrides?.eigenAiService ? { service: overrides.eigenAiService } : await getRuntimeEigenAiService();
+    return runtimeContext.service.createSchemaDraft(payload);
   } catch (error) {
     return serviceUnavailable(error?.message);
   }
@@ -690,8 +745,9 @@ export async function handleAiSchemaDraftRequest(payload, overrides = null) {
 
 export async function handleAiPolicyDraftRequest(payload, overrides = null) {
   try {
-    const service = overrides?.eigenAiService || (await getRuntimeEigenAiService());
-    return service.createPolicyDraft(payload);
+    const runtimeContext =
+      overrides?.eigenAiService ? { service: overrides.eigenAiService } : await getRuntimeEigenAiService();
+    return runtimeContext.service.createPolicyDraft(payload);
   } catch (error) {
     return serviceUnavailable(error?.message);
   }
@@ -699,10 +755,34 @@ export async function handleAiPolicyDraftRequest(payload, overrides = null) {
 
 export async function handleAiApproveDraftRequest(payload, overrides = null) {
   try {
-    const service = overrides?.eigenAiService || (await getRuntimeEigenAiService());
-    return service.approveDraft(payload);
+    if (overrides?.eigenAiService) {
+      const result = await overrides.eigenAiService.approveDraft(payload);
+      return attachAiApproveEnvelope({
+        payload,
+        result,
+        databaseDialect: overrides.databaseDialect || 'unknown',
+        receiptService: overrides.receiptService || defaultReceiptService,
+        auditService: overrides.auditService || defaultAuditService
+      });
+    }
+
+    const runtimeContext = await getRuntimeEigenAiService();
+    const result = await runtimeContext.service.approveDraft(payload);
+    return attachAiApproveEnvelope({
+      payload,
+      result,
+      databaseDialect: runtimeContext.databaseDialect,
+      receiptService: runtimeContext.receiptService,
+      auditService: runtimeContext.auditService
+    });
   } catch (error) {
-    return serviceUnavailable(error?.message);
+    return attachAiApproveEnvelope({
+      payload,
+      result: serviceUnavailable(error?.message),
+      databaseDialect: overrides?.databaseDialect || 'unknown',
+      receiptService: overrides?.receiptService || defaultReceiptService,
+      auditService: overrides?.auditService || defaultAuditService
+    });
   }
 }
 
