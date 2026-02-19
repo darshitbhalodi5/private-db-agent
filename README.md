@@ -302,6 +302,43 @@ Versioning and tracing:
 - API version header: `x-api-version: v1`
 - Correlation header: `x-correlation-id` (accepted or generated on every request)
 
+## Observability and hardening (Task 9)
+
+Operational metrics endpoint:
+
+- `GET /v1/ops/metrics`
+
+Structured logging:
+
+- JSON request lifecycle logs with:
+  - correlation ID
+  - method/path
+  - status code
+  - duration
+
+Metrics captured:
+
+- `http_requests_total` (method/path/status)
+- `http_request_duration_ms`
+- `decision_outcomes_total` (allow/deny + reason)
+- `migration_apply_duration_ms`
+- `rate_limited_total`
+- `request_timeouts_total`
+
+Security/reliability guards:
+
+- In-memory fixed-window rate limiter.
+- JSON body size limit (`413 PAYLOAD_TOO_LARGE` on overflow).
+- Route execution timeout guard (`504 REQUEST_TIMEOUT`).
+- Correlation + API version headers attached to responses.
+
+Secret hygiene/rotation:
+
+- Secrets should come from environment/secret manager only.
+- Do not log private keys, shared secrets, signatures, or tokens.
+- Rotate auth/agent shared secrets on a fixed cadence (`SECRET_ROTATION_DAYS`).
+- Keep least-privilege separation between demo keys and production keys.
+
 ## Response receipt contract
 
 Every query response now includes:
@@ -384,3 +421,12 @@ Proof/verification env vars:
 - `A2A_TASK_ALLOWLIST_JSON={"agent-a":["query.execute","policy.preview-decision"]}`
 - `A2A_NONCE_TTL_SECONDS=300`
 - `A2A_MAX_FUTURE_SKEW_SECONDS=60`
+- `LOG_LEVEL=info`
+- `METRICS_ENABLED=true`
+- `METRICS_ROUTE_ENABLED=true`
+- `MAX_JSON_BODY_BYTES=1048576`
+- `REQUEST_TIMEOUT_MS=15000`
+- `RATE_LIMIT_ENABLED=true`
+- `RATE_LIMIT_WINDOW_MS=60000`
+- `RATE_LIMIT_MAX_REQUESTS=300`
+- `SECRET_ROTATION_DAYS=30`

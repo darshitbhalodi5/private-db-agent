@@ -40,6 +40,12 @@ curl -s http://localhost:8080/v1/runtime/attestation
 curl -s http://localhost:8080/.well-known/agent-card.json
 ```
 
+7. Verify ops metrics endpoint:
+
+```bash
+curl -s http://localhost:8080/v1/ops/metrics
+```
+
 ## Demo Scenarios
 
 1. `allow-balance-read`

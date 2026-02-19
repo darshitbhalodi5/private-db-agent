@@ -64,6 +64,18 @@ services:
       A2A_ADMIN_AGENT_IDS: orchestrator-agent
       A2A_NONCE_TTL_SECONDS: "300"
       A2A_MAX_FUTURE_SKEW_SECONDS: "60"
+
+      LOG_LEVEL: info
+      METRICS_ENABLED: "true"
+      METRICS_ROUTE_ENABLED: "true"
+
+      MAX_JSON_BODY_BYTES: "1048576"
+      REQUEST_TIMEOUT_MS: "15000"
+      RATE_LIMIT_ENABLED: "true"
+      RATE_LIMIT_WINDOW_MS: "60000"
+      RATE_LIMIT_MAX_REQUESTS: "300"
+
+      SECRET_ROTATION_DAYS: "30"
     ports:
       - "8080:8080"
     restart: unless-stopped

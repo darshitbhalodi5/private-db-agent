@@ -13,6 +13,10 @@
 - [x] A2A agent card and task lifecycle endpoints.
 - [x] Idempotency keys and replay-safe A2A task handling.
 - [x] Agent-to-agent authentication/authorization controls.
+- [x] Structured request logging with correlation IDs.
+- [x] Ops metrics endpoint (`/v1/ops/metrics`) with decision/migration telemetry.
+- [x] Rate limiting, JSON body size limits, and timeout guards.
+- [x] Secret rotation and config hygiene notes in docs.
 
 ## Packaging
 
