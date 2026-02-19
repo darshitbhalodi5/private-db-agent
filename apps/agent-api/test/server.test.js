@@ -107,6 +107,15 @@ test('loadConfig returns default values including database settings', () => {
   assert.deepEqual(config.a2a.taskAllowlist, {});
   assert.equal(config.a2a.nonceTtlSeconds, 300);
   assert.equal(config.a2a.maxFutureSkewSeconds, 60);
+  assert.equal(config.observability.logLevel, 'info');
+  assert.equal(config.observability.metricsEnabled, true);
+  assert.equal(config.observability.metricsRouteEnabled, true);
+  assert.equal(config.security.maxJsonBodyBytes, 1048576);
+  assert.equal(config.security.requestTimeoutMs, 15000);
+  assert.equal(config.security.rateLimit.enabled, true);
+  assert.equal(config.security.rateLimit.windowMs, 60000);
+  assert.equal(config.security.rateLimit.maxRequests, 300);
+  assert.equal(config.operations.secretRotationDays, 30);
 });
 
 test('query service returns execution result after auth and policy pass', async () => {
