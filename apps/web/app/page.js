@@ -5,8 +5,18 @@ import { useEffect, useMemo, useState } from 'react';
 const DB_ENGINES = ['postgres', 'sqlite'];
 const FIELD_TYPES = ['text', 'integer', 'numeric', 'boolean', 'timestamp', 'jsonb'];
 const OPERATIONS = ['all', 'read', 'insert', 'update', 'delete', 'alter'];
+const DATA_ACTION_OPERATIONS = ['read', 'insert', 'update', 'delete'];
+const QUERY_CAPABILITIES = ['balances:read', 'transactions:read', 'audit:read'];
+const QUERY_TEMPLATES = [
+  'wallet_balances',
+  'wallet_positions',
+  'wallet_transactions',
+  'access_log_recent',
+  'policy_denies_recent'
+];
 const TENANT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 const SIGNING_CONTEXT = 'PRIVATE_DB_AGENT_POLICY_MUTATION_V1';
+const QUERY_SIGNING_CONTEXT = 'PRIVATE_DB_AGENT_AUTH_V1';
 
 function makeId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
@@ -137,12 +147,134 @@ function buildApproveDraftActionPayload({ draftId, draftHash }) {
   };
 }
 
+function buildDataExecuteActionPayload(payload) {
+  return {
+    tableName: payload.tableName || null,
+    operation: payload.operation || null,
+    values: payload.values || null,
+    filters: payload.filters || null,
+    columns: payload.columns || null,
+    limit: payload.limit ?? null,
+    agentOverride: null,
+    bypassPolicy: null,
+    skipAuth: null,
+    executeAsAgent: null,
+    superuser: null,
+    trustedOperator: null
+  };
+}
+
+function buildGrantCreateActionPayload(grant) {
+  return {
+    walletAddress: grant.walletAddress || null,
+    scopeType: grant.scopeType || null,
+    scopeId: grant.scopeId || null,
+    operation: grant.operation || null,
+    effect: grant.effect || null
+  };
+}
+
+function buildGrantRevokeActionPayload({ grantId, expectedSignatureHash = null }) {
+  return {
+    grantId,
+    expectedSignatureHash: expectedSignatureHash || null
+  };
+}
+
+function buildQuerySignedMessage({
+  requestId,
+  tenantId,
+  requester,
+  capability,
+  queryTemplate,
+  queryParams,
+  nonce,
+  signedAt
+}) {
+  const envelope = {
+    requestId,
+    tenantId,
+    requester,
+    capability,
+    queryTemplate,
+    queryParams: queryParams || {},
+    nonce,
+    signedAt
+  };
+
+  return `${QUERY_SIGNING_CONTEXT}\n${stableStringify(envelope)}`;
+}
+
+function parseJsonInput(rawValue, label) {
+  const value = String(rawValue || '').trim();
+  if (!value) {
+    return {
+      ok: true,
+      value: null
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return {
+      ok: true,
+      value: parsed
+    };
+  } catch {
+    return {
+      ok: false,
+      error: `${label} must be valid JSON.`
+    };
+  }
+}
+
+function isObjectValue(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 function unwrapForwardedBody(body) {
   if (body && typeof body === 'object' && body.upstreamBody && typeof body.upstreamBody === 'object') {
     return body.upstreamBody;
   }
 
   return body;
+}
+
+function normalizeEnvelopeBody(body) {
+  const unwrapped = unwrapForwardedBody(body);
+  if (unwrapped && typeof unwrapped === 'object') {
+    return unwrapped;
+  }
+
+  return {};
+}
+
+function deriveRuntimeVerificationStatus(body) {
+  const receiptStatus = body?.receipt?.verification?.runtime?.verification?.status;
+  if (typeof receiptStatus === 'string' && receiptStatus.trim().length > 0) {
+    return receiptStatus;
+  }
+
+  const runtimeStatus = body?.runtime?.verificationStatus || body?.runtime?.verification?.status;
+  if (typeof runtimeStatus === 'string' && runtimeStatus.trim().length > 0) {
+    return runtimeStatus;
+  }
+
+  return 'unknown';
+}
+
+function deriveRuntimeVerified(body) {
+  const receiptVerified = body?.receipt?.verification?.runtime?.verification?.verified;
+  if (typeof receiptVerified === 'boolean') {
+    return receiptVerified;
+  }
+
+  const runtimeVerified = body?.runtime?.verified;
+  if (typeof runtimeVerified === 'boolean') {
+    return runtimeVerified;
+  }
+
+  return null;
 }
 
 function createNonce() {
@@ -400,6 +532,59 @@ export default function HomePage() {
   const [isGeneratingSchemaDraft, setIsGeneratingSchemaDraft] = useState(false);
   const [isGeneratingPolicyDraft, setIsGeneratingPolicyDraft] = useState(false);
   const [isApprovingAiDraft, setIsApprovingAiDraft] = useState(false);
+  const [queryCapability, setQueryCapability] = useState('balances:read');
+  const [queryTemplate, setQueryTemplate] = useState('wallet_balances');
+  const [queryParamsText, setQueryParamsText] = useState(
+    JSON.stringify(
+      {
+        walletAddress: '0x8ba1f109551bd432803012645ac136ddd64dba72',
+        chainId: 1,
+        limit: 25
+      },
+      null,
+      2
+    )
+  );
+  const [isRunningQuery, setIsRunningQuery] = useState(false);
+  const [dataOperation, setDataOperation] = useState('read');
+  const [dataTableName, setDataTableName] = useState('inventory');
+  const [dataValuesText, setDataValuesText] = useState(
+    JSON.stringify(
+      {
+        item_id: 'item-1',
+        quantity: 1
+      },
+      null,
+      2
+    )
+  );
+  const [dataFiltersText, setDataFiltersText] = useState(
+    JSON.stringify(
+      {
+        item_id: 'item-1'
+      },
+      null,
+      2
+    )
+  );
+  const [dataColumnsText, setDataColumnsText] = useState(
+    JSON.stringify(['item_id', 'quantity'], null, 2)
+  );
+  const [dataLimit, setDataLimit] = useState('25');
+  const [isRunningDataAction, setIsRunningDataAction] = useState(false);
+  const [policyGrantWallet, setPolicyGrantWallet] = useState('');
+  const [policyGrantScopeType, setPolicyGrantScopeType] = useState('table');
+  const [policyGrantScopeId, setPolicyGrantScopeId] = useState('inventory');
+  const [policyGrantOperation, setPolicyGrantOperation] = useState('read');
+  const [policyGrantEffect, setPolicyGrantEffect] = useState('allow');
+  const [policyGrants, setPolicyGrants] = useState([]);
+  const [selectedGrantId, setSelectedGrantId] = useState('');
+  const [expectedGrantSignatureHash, setExpectedGrantSignatureHash] = useState('');
+  const [isLoadingPolicyGrants, setIsLoadingPolicyGrants] = useState(false);
+  const [isCreatingPolicyGrant, setIsCreatingPolicyGrant] = useState(false);
+  const [isRevokingPolicyGrant, setIsRevokingPolicyGrant] = useState(false);
+  const [actionError, setActionError] = useState('');
+  const [actionHistory, setActionHistory] = useState([]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.ethereum || !window.ethereum.on) {
@@ -533,6 +718,117 @@ export default function HomePage() {
         signature
       }
     };
+  }
+
+  async function signQueryAction({
+    requestIdForAction,
+    capability,
+    queryTemplate,
+    queryParams
+  }) {
+    if (typeof window === 'undefined' || !window.ethereum?.request) {
+      throw new Error('Wallet provider is required to sign this request.');
+    }
+
+    const signingWallet = creator.address.trim();
+    const requester = draft.payload.actorWallet;
+    if (!signingWallet || !requester) {
+      throw new Error('Connect creator wallet before signing query action.');
+    }
+
+    if (!draft.payload.tenantId) {
+      throw new Error('tenantId is required before running query action.');
+    }
+
+    const nonce = createNonce();
+    const signedAt = new Date().toISOString();
+    const signingMessage = buildQuerySignedMessage({
+      requestId: requestIdForAction,
+      tenantId: draft.payload.tenantId,
+      requester,
+      capability,
+      queryTemplate,
+      queryParams,
+      nonce,
+      signedAt
+    });
+
+    let signature;
+    try {
+      signature = await window.ethereum.request({
+        method: 'personal_sign',
+        params: [signingMessage, signingWallet]
+      });
+    } catch {
+      signature = await window.ethereum.request({
+        method: 'personal_sign',
+        params: [signingWallet, signingMessage]
+      });
+    }
+
+    return {
+      requester,
+      auth: {
+        nonce,
+        signedAt,
+        signature
+      }
+    };
+  }
+
+  function appendActionHistory({ actionType, label, statusCode, responseBody }) {
+    const normalizedBody = normalizeEnvelopeBody(responseBody);
+    const decision = isObjectValue(normalizedBody.decision) ? normalizedBody.decision : null;
+    const receipt = isObjectValue(normalizedBody.receipt) ? normalizedBody.receipt : null;
+    const audit = isObjectValue(normalizedBody.audit) ? normalizedBody.audit : null;
+    const runtimeStatus = deriveRuntimeVerificationStatus(normalizedBody);
+    const runtimeVerified = deriveRuntimeVerified(normalizedBody);
+
+    setActionHistory((previous) =>
+      [
+        {
+          id: makeId('action'),
+          actionType,
+          label,
+          timestamp: new Date().toISOString(),
+          requestId:
+            normalizedBody.requestId ||
+            normalizedBody.details?.requestId ||
+            normalizedBody.submissionId ||
+            null,
+          statusCode,
+          outcome:
+            decision?.outcome ||
+            (statusCode >= 200 && statusCode < 400 ? 'allow' : 'deny'),
+          decisionCode: decision?.code || normalizedBody.code || normalizedBody.error || 'UNKNOWN',
+          decisionMessage: decision?.message || normalizedBody.message || null,
+          receiptId: receipt?.receiptId || null,
+          requestHash: receipt?.requestHash || null,
+          decisionHash: receipt?.decisionHash || null,
+          verificationHash: receipt?.verificationHash || null,
+          runtimeStatus,
+          runtimeVerified,
+          auditLogged: typeof audit?.logged === 'boolean' ? audit.logged : false,
+          auditCode: audit?.code || null,
+          body: normalizedBody
+        },
+        ...previous
+      ].slice(0, 30)
+    );
+  }
+
+  function getActionResponseMessage(responseBody, fallbackMessage) {
+    const normalizedBody = normalizeEnvelopeBody(responseBody);
+
+    if (typeof normalizedBody.message === 'string' && normalizedBody.message.trim().length > 0) {
+      return normalizedBody.message;
+    }
+
+    if (typeof normalizedBody.error === 'string' && normalizedBody.error.trim().length > 0) {
+      return normalizedBody.error;
+    }
+
+    return fallbackMessage;
   }
 
   function applySchemaDraftToBuilder(submissionPayload) {
@@ -928,6 +1224,465 @@ export default function HomePage() {
     );
   }
 
+  async function loadPolicyGrants() {
+    if (isLoadingPolicyGrants) {
+      return;
+    }
+
+    if (!draft.payload.tenantId) {
+      setActionError('tenantId is required before loading policy grants.');
+      return;
+    }
+
+    setIsLoadingPolicyGrants(true);
+    setActionError('');
+
+    try {
+      const response = await fetch(
+        `/api/policy/grants?tenantId=${encodeURIComponent(draft.payload.tenantId)}`,
+        {
+          method: 'GET',
+          cache: 'no-store'
+        }
+      );
+      const body = await response.json().catch(() => null);
+      const normalizedBody = normalizeEnvelopeBody(body);
+
+      if (!response.ok) {
+        throw new Error(
+          getActionResponseMessage(body, 'Unable to load policy grants for this tenant.')
+        );
+      }
+
+      const nextGrants = Array.isArray(normalizedBody.grants) ? normalizedBody.grants : [];
+      setPolicyGrants(nextGrants);
+      setSelectedGrantId((previous) => {
+        const exists = nextGrants.some((grant) => grant.grantId === previous);
+        return exists ? previous : '';
+      });
+    } catch (error) {
+      setActionError(error?.message || 'Unable to load policy grants for this tenant.');
+    } finally {
+      setIsLoadingPolicyGrants(false);
+    }
+  }
+
+  async function runQueryAction() {
+    if (isRunningQuery) {
+      return;
+    }
+
+    if (!draft.payload.tenantId) {
+      setActionError('tenantId is required before running query action.');
+      return;
+    }
+
+    const parsedQueryParams = parseJsonInput(queryParamsText, 'Query params');
+    if (!parsedQueryParams.ok) {
+      setActionError(parsedQueryParams.error);
+      return;
+    }
+
+    const queryParams = parsedQueryParams.value === null ? {} : parsedQueryParams.value;
+    if (!isObjectValue(queryParams)) {
+      setActionError('Query params must be a JSON object.');
+      return;
+    }
+
+    const capability = queryCapability.trim();
+    if (!capability) {
+      setActionError('Capability is required for query action.');
+      return;
+    }
+
+    const template = queryTemplate.trim();
+    if (!template) {
+      setActionError('Query template is required for query action.');
+      return;
+    }
+
+    setIsRunningQuery(true);
+    setActionError('');
+
+    try {
+      const queryRequestId = makeId('req_query');
+      const signResult = await signQueryAction({
+        requestIdForAction: queryRequestId,
+        capability,
+        queryTemplate: template,
+        queryParams
+      });
+
+      const response = await fetch('/api/query', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          requestId: queryRequestId,
+          tenantId: draft.payload.tenantId,
+          requester: signResult.requester,
+          capability,
+          queryTemplate: template,
+          queryParams,
+          auth: signResult.auth
+        })
+      });
+
+      const body = await response.json().catch(() => null);
+      appendActionHistory({
+        actionType: 'query',
+        label: `Query · ${template}`,
+        statusCode: response.status,
+        responseBody: body
+      });
+
+      if (!response.ok) {
+        throw new Error(getActionResponseMessage(body, 'Query action failed.'));
+      }
+    } catch (error) {
+      setActionError(error?.message || 'Query action failed.');
+    } finally {
+      setIsRunningQuery(false);
+    }
+  }
+
+  async function runDataAction() {
+    if (isRunningDataAction) {
+      return;
+    }
+
+    if (!draft.payload.tenantId) {
+      setActionError('tenantId is required before running data action.');
+      return;
+    }
+
+    const operation = String(dataOperation || '').trim().toLowerCase();
+    if (!DATA_ACTION_OPERATIONS.includes(operation)) {
+      setActionError(`Data operation must be one of: ${DATA_ACTION_OPERATIONS.join(', ')}.`);
+      return;
+    }
+
+    const tableName = String(dataTableName || '').trim().toLowerCase();
+    if (!tableName) {
+      setActionError('tableName is required for data action.');
+      return;
+    }
+
+    let values = null;
+    let filters = null;
+    let columns = null;
+    let limit = null;
+
+    if (operation === 'read') {
+      const filtersInput = parseJsonInput(dataFiltersText, 'Filters');
+      if (!filtersInput.ok) {
+        setActionError(filtersInput.error);
+        return;
+      }
+      if (filtersInput.value !== null && !isObjectValue(filtersInput.value)) {
+        setActionError('Filters must be a JSON object for read operation.');
+        return;
+      }
+      filters = filtersInput.value;
+
+      const columnsInput = parseJsonInput(dataColumnsText, 'Columns');
+      if (!columnsInput.ok) {
+        setActionError(columnsInput.error);
+        return;
+      }
+      if (columnsInput.value !== null) {
+        if (!Array.isArray(columnsInput.value)) {
+          setActionError('Columns must be a JSON array for read operation.');
+          return;
+        }
+
+        const normalizedColumns = columnsInput.value
+          .map((column) => (typeof column === 'string' ? column.trim().toLowerCase() : ''))
+          .filter(Boolean);
+        if (normalizedColumns.length !== columnsInput.value.length) {
+          setActionError('Columns must contain only non-empty string values.');
+          return;
+        }
+        columns = normalizedColumns;
+      }
+
+      if (dataLimit.trim().length > 0) {
+        const parsedLimit = Number.parseInt(dataLimit, 10);
+        if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 500) {
+          setActionError('Limit must be an integer between 1 and 500.');
+          return;
+        }
+        limit = parsedLimit;
+      }
+    } else if (operation === 'insert') {
+      const valuesInput = parseJsonInput(dataValuesText, 'Values');
+      if (!valuesInput.ok) {
+        setActionError(valuesInput.error);
+        return;
+      }
+      if (!isObjectValue(valuesInput.value)) {
+        setActionError('Values must be a JSON object for insert operation.');
+        return;
+      }
+      values = valuesInput.value;
+    } else if (operation === 'update') {
+      const valuesInput = parseJsonInput(dataValuesText, 'Values');
+      if (!valuesInput.ok) {
+        setActionError(valuesInput.error);
+        return;
+      }
+      if (!isObjectValue(valuesInput.value)) {
+        setActionError('Values must be a JSON object for update operation.');
+        return;
+      }
+      const filtersInput = parseJsonInput(dataFiltersText, 'Filters');
+      if (!filtersInput.ok) {
+        setActionError(filtersInput.error);
+        return;
+      }
+      if (!isObjectValue(filtersInput.value)) {
+        setActionError('Filters must be a JSON object for update operation.');
+        return;
+      }
+      values = valuesInput.value;
+      filters = filtersInput.value;
+    } else {
+      const filtersInput = parseJsonInput(dataFiltersText, 'Filters');
+      if (!filtersInput.ok) {
+        setActionError(filtersInput.error);
+        return;
+      }
+      if (!isObjectValue(filtersInput.value)) {
+        setActionError('Filters must be a JSON object for delete operation.');
+        return;
+      }
+      filters = filtersInput.value;
+    }
+
+    setIsRunningDataAction(true);
+    setActionError('');
+
+    try {
+      const dataRequestId = makeId('req_data');
+      const actionPayload = buildDataExecuteActionPayload({
+        tableName,
+        operation,
+        values,
+        filters,
+        columns,
+        limit
+      });
+      const signResult = await signPolicyAction({
+        action: 'data:execute',
+        payload: actionPayload,
+        requestIdOverride: dataRequestId
+      });
+
+      const requestPayload = {
+        requestId: dataRequestId,
+        tenantId: draft.payload.tenantId,
+        actorWallet: signResult.actorWallet,
+        operation,
+        tableName,
+        auth: signResult.auth
+      };
+      if (values !== null) {
+        requestPayload.values = values;
+      }
+      if (filters !== null) {
+        requestPayload.filters = filters;
+      }
+      if (columns !== null) {
+        requestPayload.columns = columns;
+      }
+      if (limit !== null) {
+        requestPayload.limit = limit;
+      }
+
+      const response = await fetch('/api/data/execute', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify(requestPayload)
+      });
+
+      const body = await response.json().catch(() => null);
+      appendActionHistory({
+        actionType: 'data',
+        label: `Data · ${operation}`,
+        statusCode: response.status,
+        responseBody: body
+      });
+
+      if (!response.ok) {
+        throw new Error(getActionResponseMessage(body, 'Data operation failed.'));
+      }
+    } catch (error) {
+      setActionError(error?.message || 'Data operation failed.');
+    } finally {
+      setIsRunningDataAction(false);
+    }
+  }
+
+  async function createPolicyGrant() {
+    if (isCreatingPolicyGrant) {
+      return;
+    }
+
+    if (!draft.payload.tenantId) {
+      setActionError('tenantId is required before creating policy grant.');
+      return;
+    }
+
+    const targetWallet = policyGrantWallet.trim();
+    if (!isWalletAddress(targetWallet)) {
+      setActionError('Grant wallet must be a valid EVM wallet address.');
+      return;
+    }
+
+    const scopeType = String(policyGrantScopeType || '').trim().toLowerCase();
+    const scopeId =
+      scopeType === 'database' ? '*' : String(policyGrantScopeId || '').trim().toLowerCase();
+    if (!scopeId) {
+      setActionError('Scope ID is required for table-level grant.');
+      return;
+    }
+
+    const operation = String(policyGrantOperation || '').trim().toLowerCase();
+    if (!OPERATIONS.includes(operation)) {
+      setActionError(`Grant operation must be one of: ${OPERATIONS.join(', ')}.`);
+      return;
+    }
+
+    const effect = String(policyGrantEffect || '').trim().toLowerCase();
+    if (!['allow', 'deny'].includes(effect)) {
+      setActionError('Grant effect must be either allow or deny.');
+      return;
+    }
+
+    setIsCreatingPolicyGrant(true);
+    setActionError('');
+
+    try {
+      const policyRequestId = makeId('req_grant_create');
+      const grant = {
+        walletAddress: normalizeWalletAddress(targetWallet),
+        scopeType,
+        scopeId,
+        operation,
+        effect
+      };
+      const signResult = await signPolicyAction({
+        action: 'grant:create',
+        payload: buildGrantCreateActionPayload(grant),
+        requestIdOverride: policyRequestId
+      });
+
+      const response = await fetch('/api/policy/grants', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          requestId: policyRequestId,
+          tenantId: draft.payload.tenantId,
+          actorWallet: signResult.actorWallet,
+          grant,
+          auth: signResult.auth
+        })
+      });
+
+      const body = await response.json().catch(() => null);
+      appendActionHistory({
+        actionType: 'policy-mutation',
+        label: `Policy · create ${scopeType}:${operation}`,
+        statusCode: response.status,
+        responseBody: body
+      });
+
+      if (!response.ok) {
+        throw new Error(getActionResponseMessage(body, 'Policy grant creation failed.'));
+      }
+
+      setPolicyGrantWallet('');
+      await loadPolicyGrants();
+    } catch (error) {
+      setActionError(error?.message || 'Policy grant creation failed.');
+    } finally {
+      setIsCreatingPolicyGrant(false);
+    }
+  }
+
+  async function revokePolicyGrant() {
+    if (isRevokingPolicyGrant) {
+      return;
+    }
+
+    if (!draft.payload.tenantId) {
+      setActionError('tenantId is required before revoking policy grant.');
+      return;
+    }
+
+    const grantId = selectedGrantId.trim();
+    if (!grantId) {
+      setActionError('Select a grant before revoking.');
+      return;
+    }
+
+    setIsRevokingPolicyGrant(true);
+    setActionError('');
+
+    try {
+      const revokeRequestId = makeId('req_grant_revoke');
+      const expectedHash = expectedGrantSignatureHash.trim() || null;
+      const payload = buildGrantRevokeActionPayload({
+        grantId,
+        expectedSignatureHash: expectedHash
+      });
+      const signResult = await signPolicyAction({
+        action: 'grant:revoke',
+        payload,
+        requestIdOverride: revokeRequestId
+      });
+
+      const response = await fetch('/api/policy/grants/revoke', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          requestId: revokeRequestId,
+          tenantId: draft.payload.tenantId,
+          actorWallet: signResult.actorWallet,
+          grantId,
+          expectedSignatureHash: expectedHash,
+          auth: signResult.auth
+        })
+      });
+
+      const body = await response.json().catch(() => null);
+      appendActionHistory({
+        actionType: 'policy-mutation',
+        label: 'Policy · revoke grant',
+        statusCode: response.status,
+        responseBody: body
+      });
+
+      if (!response.ok) {
+        throw new Error(getActionResponseMessage(body, 'Policy grant revoke failed.'));
+      }
+
+      setExpectedGrantSignatureHash('');
+      await loadPolicyGrants();
+    } catch (error) {
+      setActionError(error?.message || 'Policy grant revoke failed.');
+    } finally {
+      setIsRevokingPolicyGrant(false);
+    }
+  }
+
   async function submitDraft(event) {
     event.preventDefault();
 
@@ -975,12 +1730,13 @@ export default function HomePage() {
       });
 
       const body = await response.json().catch(() => null);
+      const normalizedBody = normalizeEnvelopeBody(body);
 
       if (!response.ok) {
-        throw new Error(body?.message || body?.error || 'Submission failed.');
+        throw new Error(getActionResponseMessage(body, 'Submission failed.'));
       }
 
-      setSubmission(body);
+      setSubmission(normalizedBody);
       setRequestId(makeId('req'));
     } catch (error) {
       setSubmissionError(error?.message || 'Submission failed.');
@@ -1038,12 +1794,19 @@ export default function HomePage() {
       });
 
       const body = await response.json().catch(() => null);
+      const normalizedBody = normalizeEnvelopeBody(body);
+      appendActionHistory({
+        actionType: 'schema-apply',
+        label: 'Schema apply',
+        statusCode: response.status,
+        responseBody: body
+      });
 
       if (!response.ok) {
-        throw new Error(body?.message || body?.error || 'Schema apply failed.');
+        throw new Error(getActionResponseMessage(body, 'Schema apply failed.'));
       }
 
-      setSubmission(body);
+      setSubmission(normalizedBody);
       setRequestId(makeId('req'));
     } catch (error) {
       setSubmissionError(error?.message || 'Schema apply failed.');
@@ -1535,6 +2298,329 @@ export default function HomePage() {
           ) : null}
 
           <pre className="json-preview">{JSON.stringify(draft.payload, null, 2)}</pre>
+        </section>
+
+        <section className="card full-width">
+          <header className="section-row">
+            <h2>8. Action Playground + Proof Explorer</h2>
+            <div className="inline-row">
+              <button
+                type="button"
+                className="btn btn-muted"
+                onClick={loadPolicyGrants}
+                disabled={isLoadingPolicyGrants}
+              >
+                {isLoadingPolicyGrants ? 'Loading Grants...' : 'Refresh Policy Grants'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={() => setActionHistory([])}
+              >
+                Clear Proof History
+              </button>
+            </div>
+          </header>
+
+          <p className="muted">
+            Run query/data/policy actions and inspect cryptographic proof fields for each response.
+          </p>
+          {actionError ? <p className="error-text">{actionError}</p> : null}
+
+          <div className="action-grid">
+            <article className="table-card">
+              <header className="section-row">
+                <h3>Query Action</h3>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={runQueryAction}
+                  disabled={isRunningQuery}
+                >
+                  {isRunningQuery ? 'Running Query...' : 'Run Query'}
+                </button>
+              </header>
+              <label>
+                Capability
+                <select
+                  value={queryCapability}
+                  onChange={(event) => setQueryCapability(event.target.value)}
+                >
+                  {QUERY_CAPABILITIES.map((capability) => (
+                    <option key={capability} value={capability}>
+                      {capability}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Query template
+                <select
+                  value={queryTemplate}
+                  onChange={(event) => setQueryTemplate(event.target.value)}
+                >
+                  {QUERY_TEMPLATES.map((template) => (
+                    <option key={template} value={template}>
+                      {template}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Query params (JSON object)
+                <textarea
+                  rows={8}
+                  value={queryParamsText}
+                  onChange={(event) => setQueryParamsText(event.target.value)}
+                />
+              </label>
+            </article>
+
+            <article className="table-card">
+              <header className="section-row">
+                <h3>Data Action</h3>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={runDataAction}
+                  disabled={isRunningDataAction}
+                >
+                  {isRunningDataAction ? 'Running Data Action...' : 'Run Data Action'}
+                </button>
+              </header>
+
+              <div className="field-grid two-col">
+                <label>
+                  Operation
+                  <select
+                    value={dataOperation}
+                    onChange={(event) => setDataOperation(event.target.value)}
+                  >
+                    {DATA_ACTION_OPERATIONS.map((operation) => (
+                      <option key={operation} value={operation}>
+                        {operation}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Table name
+                  <input
+                    value={dataTableName}
+                    onChange={(event) => setDataTableName(event.target.value)}
+                    placeholder="inventory"
+                  />
+                </label>
+              </div>
+
+              <label>
+                Values (JSON object for insert/update)
+                <textarea
+                  rows={5}
+                  value={dataValuesText}
+                  onChange={(event) => setDataValuesText(event.target.value)}
+                />
+              </label>
+              <label>
+                Filters (JSON object for read/update/delete)
+                <textarea
+                  rows={5}
+                  value={dataFiltersText}
+                  onChange={(event) => setDataFiltersText(event.target.value)}
+                />
+              </label>
+              <div className="field-grid two-col">
+                <label>
+                  Columns (JSON array for read)
+                  <textarea
+                    rows={4}
+                    value={dataColumnsText}
+                    onChange={(event) => setDataColumnsText(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Limit (for read)
+                  <input
+                    value={dataLimit}
+                    onChange={(event) => setDataLimit(event.target.value)}
+                    placeholder="25"
+                  />
+                </label>
+              </div>
+            </article>
+
+            <article className="table-card">
+              <header className="section-row">
+                <h3>Policy Mutations</h3>
+                <p className="muted">Active grants: {policyGrants.length}</p>
+              </header>
+
+              <h4>Create Grant</h4>
+              <div className="field-grid two-col">
+                <label>
+                  Wallet address
+                  <input
+                    value={policyGrantWallet}
+                    onChange={(event) => setPolicyGrantWallet(event.target.value)}
+                    placeholder="0x..."
+                  />
+                </label>
+                <label>
+                  Scope type
+                  <select
+                    value={policyGrantScopeType}
+                    onChange={(event) => setPolicyGrantScopeType(event.target.value)}
+                  >
+                    <option value="table">table</option>
+                    <option value="database">database</option>
+                  </select>
+                </label>
+                <label>
+                  Scope ID
+                  <input
+                    value={policyGrantScopeType === 'database' ? '*' : policyGrantScopeId}
+                    onChange={(event) => setPolicyGrantScopeId(event.target.value)}
+                    placeholder="inventory"
+                    disabled={policyGrantScopeType === 'database'}
+                  />
+                </label>
+                <label>
+                  Operation
+                  <select
+                    value={policyGrantOperation}
+                    onChange={(event) => setPolicyGrantOperation(event.target.value)}
+                  >
+                    {OPERATIONS.map((operation) => (
+                      <option key={`grant-op-${operation}`} value={operation}>
+                        {operation}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Effect
+                  <select
+                    value={policyGrantEffect}
+                    onChange={(event) => setPolicyGrantEffect(event.target.value)}
+                  >
+                    <option value="allow">allow</option>
+                    <option value="deny">deny</option>
+                  </select>
+                </label>
+              </div>
+
+              <div className="inline-row">
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={createPolicyGrant}
+                  disabled={isCreatingPolicyGrant}
+                >
+                  {isCreatingPolicyGrant ? 'Creating...' : 'Create Grant'}
+                </button>
+              </div>
+
+              <h4>Revoke Grant</h4>
+              <div className="field-grid two-col">
+                <label>
+                  Grant ID
+                  <select
+                    value={selectedGrantId}
+                    onChange={(event) => setSelectedGrantId(event.target.value)}
+                  >
+                    <option value="">Select grant</option>
+                    {policyGrants.map((grant) => (
+                      <option key={grant.grantId} value={grant.grantId}>
+                        {grant.grantId} · {grant.scopeType}:{grant.scopeId}:{grant.operation}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Expected signature hash (optional)
+                  <input
+                    value={expectedGrantSignatureHash}
+                    onChange={(event) => setExpectedGrantSignatureHash(event.target.value)}
+                    placeholder="sha256..."
+                  />
+                </label>
+              </div>
+              <div className="inline-row">
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={revokePolicyGrant}
+                  disabled={isRevokingPolicyGrant}
+                >
+                  {isRevokingPolicyGrant ? 'Revoking...' : 'Revoke Grant'}
+                </button>
+              </div>
+            </article>
+          </div>
+
+          {actionHistory.length === 0 ? (
+            <p className="muted">No action receipts yet. Run an action to inspect proof metadata.</p>
+          ) : (
+            <div className="stack-sm">
+              {actionHistory.map((item) => (
+                <article className="table-card" key={item.id}>
+                  <header className="section-row">
+                    <h3>{item.label}</h3>
+                    <p className="muted">
+                      {item.timestamp} · HTTP {item.statusCode}
+                    </p>
+                  </header>
+                  <div className="meta-grid">
+                    <p>
+                      <span>Outcome</span>
+                      <strong>{item.outcome}</strong>
+                    </p>
+                    <p>
+                      <span>Decision Code</span>
+                      <strong>{item.decisionCode || 'N/A'}</strong>
+                    </p>
+                    <p>
+                      <span>Request ID</span>
+                      <strong>{item.requestId || 'N/A'}</strong>
+                    </p>
+                    <p>
+                      <span>Receipt ID</span>
+                      <strong>{item.receiptId || 'N/A'}</strong>
+                    </p>
+                    <p>
+                      <span>Request Hash</span>
+                      <strong>{item.requestHash || 'N/A'}</strong>
+                    </p>
+                    <p>
+                      <span>Decision Hash</span>
+                      <strong>{item.decisionHash || 'N/A'}</strong>
+                    </p>
+                    <p>
+                      <span>Verification Hash</span>
+                      <strong>{item.verificationHash || 'N/A'}</strong>
+                    </p>
+                    <p>
+                      <span>Runtime Status</span>
+                      <strong>
+                        {item.runtimeStatus}
+                        {typeof item.runtimeVerified === 'boolean'
+                          ? ` (verified=${String(item.runtimeVerified)})`
+                          : ''}
+                      </strong>
+                    </p>
+                    <p>
+                      <span>Audit Logged</span>
+                      <strong>
+                        {String(item.auditLogged)}
+                        {item.auditCode ? ` (${item.auditCode})` : ''}
+                      </strong>
+                    </p>
+                  </div>
+                  <pre>{JSON.stringify(item.body, null, 2)}</pre>
+                </article>
+              ))}
+            </div>
+          )}
         </section>
       </form>
     </main>

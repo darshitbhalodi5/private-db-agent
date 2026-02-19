@@ -278,6 +278,12 @@ textarea:focus {
   font-size: 1rem;
 }
 
+.action-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .issues-box,
 .result-box {
   border-radius: 12px;
@@ -337,6 +343,10 @@ pre {
 
 @media (max-width: 1060px) {
   .layout-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .action-grid {
     grid-template-columns: 1fr;
   }
 
