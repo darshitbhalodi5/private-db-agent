@@ -5,6 +5,8 @@ import { useEffect, useMemo, useState } from 'react';
 const DB_ENGINES = ['postgres', 'sqlite'];
 const FIELD_TYPES = ['text', 'integer', 'numeric', 'boolean', 'timestamp', 'jsonb'];
 const OPERATIONS = ['all', 'read', 'insert', 'update', 'delete', 'alter'];
+const TENANT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;
+const SIGNING_CONTEXT = 'PRIVATE_DB_AGENT_POLICY_MUTATION_V1';
 
 function makeId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
@@ -68,8 +70,77 @@ function parseWalletInput(rawValue) {
   };
 }
 
+function stableSort(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => stableSort(item));
+  }
+
+  if (value && typeof value === 'object') {
+    const sorted = {};
+    for (const key of Object.keys(value).sort()) {
+      sorted[key] = stableSort(value[key]);
+    }
+    return sorted;
+  }
+
+  return value;
+}
+
+function stableStringify(value) {
+  return JSON.stringify(stableSort(value));
+}
+
+function buildPolicyMutationMessage({
+  requestId,
+  tenantId,
+  actorWallet,
+  action,
+  payload,
+  nonce,
+  signedAt
+}) {
+  const envelope = {
+    requestId,
+    tenantId,
+    actorWallet,
+    action,
+    payload: payload || {},
+    nonce,
+    signedAt
+  };
+
+  return `${SIGNING_CONTEXT}\n${stableStringify(envelope)}`;
+}
+
+function buildSubmitActionPayload(payload) {
+  return {
+    creator: payload.creator || null,
+    database: payload.database || null,
+    tables: Array.isArray(payload.tables) ? payload.tables : [],
+    grants: Array.isArray(payload.grants) ? payload.grants : [],
+    aiAssist: payload.aiAssist || null,
+    metadata: payload.metadata || null
+  };
+}
+
+function buildApplyActionPayload(payload) {
+  return {
+    database: payload.database || null,
+    tables: Array.isArray(payload.tables) ? payload.tables : []
+  };
+}
+
+function createNonce() {
+  if (typeof globalThis !== 'undefined' && globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+
+  return makeId('nonce');
+}
+
 function buildPayloadDraft({
   requestId,
+  tenantId,
   creator,
   databaseName,
   databaseEngine,
@@ -80,6 +151,13 @@ function buildPayloadDraft({
   aiPrompt
 }) {
   const issues = [];
+  const normalizedTenantId = String(tenantId || '').trim().toLowerCase();
+
+  if (!normalizedTenantId) {
+    issues.push('Tenant ID is required.');
+  } else if (!TENANT_ID_PATTERN.test(normalizedTenantId)) {
+    issues.push('Tenant ID must match [a-z0-9][a-z0-9_-]{0,62}.');
+  }
 
   const creatorWallet = creator.address.trim();
   if (!creatorWallet) {
@@ -222,6 +300,8 @@ function buildPayloadDraft({
     issues,
     payload: {
       requestId,
+      tenantId: normalizedTenantId || null,
+      actorWallet: creatorWallet ? normalizeWalletAddress(creatorWallet) : null,
       requestedAt: new Date().toISOString(),
       creator: {
         walletAddress: creatorWallet ? normalizeWalletAddress(creatorWallet) : null,
@@ -273,6 +353,7 @@ function parseChainId(rawValue) {
 
 export default function HomePage() {
   const [requestId, setRequestId] = useState(() => makeId('req'));
+  const [tenantId, setTenantId] = useState('tenant_demo');
   const [creator, setCreator] = useState({
     address: '',
     chainId: null
@@ -296,6 +377,7 @@ export default function HomePage() {
   const [submission, setSubmission] = useState(null);
   const [submissionError, setSubmissionError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isApplying, setIsApplying] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.ethereum || !window.ethereum.on) {
@@ -334,6 +416,7 @@ export default function HomePage() {
     () =>
       buildPayloadDraft({
         requestId,
+        tenantId,
         creator,
         databaseName,
         databaseEngine,
@@ -345,6 +428,7 @@ export default function HomePage() {
       }),
     [
       requestId,
+      tenantId,
       creator,
       databaseName,
       databaseEngine,
@@ -519,7 +603,7 @@ export default function HomePage() {
   async function submitDraft(event) {
     event.preventDefault();
 
-    if (!canSubmit || isSubmitting) {
+    if (!canSubmit || isSubmitting || isApplying) {
       return;
     }
 
@@ -528,12 +612,56 @@ export default function HomePage() {
     setIsSubmitting(true);
 
     try {
+      if (typeof window === 'undefined' || !window.ethereum?.request) {
+        throw new Error('Wallet provider is required to sign this request.');
+      }
+
+      const signingWallet = creator.address.trim();
+      const actorWallet = draft.payload.actorWallet;
+      if (!signingWallet || !actorWallet) {
+        throw new Error('Connect creator wallet before submitting.');
+      }
+
+      const nonce = createNonce();
+      const signedAt = new Date().toISOString();
+      const signingMessage = buildPolicyMutationMessage({
+        requestId: draft.payload.requestId,
+        tenantId: draft.payload.tenantId,
+        actorWallet,
+        action: 'schema:submit',
+        payload: buildSubmitActionPayload(draft.payload),
+        nonce,
+        signedAt
+      });
+
+      let signature;
+      try {
+        signature = await window.ethereum.request({
+          method: 'personal_sign',
+          params: [signingMessage, signingWallet]
+        });
+      } catch {
+        signature = await window.ethereum.request({
+          method: 'personal_sign',
+          params: [signingWallet, signingMessage]
+        });
+      }
+
+      const signedPayload = {
+        ...draft.payload,
+        auth: {
+          nonce,
+          signedAt,
+          signature
+        }
+      };
+
       const response = await fetch('/api/control-plane/submit', {
         method: 'POST',
         headers: {
           'content-type': 'application/json'
         },
-        body: JSON.stringify(draft.payload)
+        body: JSON.stringify(signedPayload)
       });
 
       const body = await response.json().catch(() => null);
@@ -548,6 +676,83 @@ export default function HomePage() {
       setSubmissionError(error?.message || 'Submission failed.');
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function applyDraft() {
+    if (!canSubmit || isSubmitting || isApplying) {
+      return;
+    }
+
+    setSubmission(null);
+    setSubmissionError('');
+    setIsApplying(true);
+
+    try {
+      if (typeof window === 'undefined' || !window.ethereum?.request) {
+        throw new Error('Wallet provider is required to sign this request.');
+      }
+
+      const signingWallet = creator.address.trim();
+      const actorWallet = draft.payload.actorWallet;
+      if (!signingWallet || !actorWallet) {
+        throw new Error('Connect creator wallet before applying schema.');
+      }
+
+      const nonce = createNonce();
+      const signedAt = new Date().toISOString();
+      const signingMessage = buildPolicyMutationMessage({
+        requestId: draft.payload.requestId,
+        tenantId: draft.payload.tenantId,
+        actorWallet,
+        action: 'schema:apply',
+        payload: buildApplyActionPayload(draft.payload),
+        nonce,
+        signedAt
+      });
+
+      let signature;
+      try {
+        signature = await window.ethereum.request({
+          method: 'personal_sign',
+          params: [signingMessage, signingWallet]
+        });
+      } catch {
+        signature = await window.ethereum.request({
+          method: 'personal_sign',
+          params: [signingWallet, signingMessage]
+        });
+      }
+
+      const signedPayload = {
+        ...draft.payload,
+        auth: {
+          nonce,
+          signedAt,
+          signature
+        }
+      };
+
+      const response = await fetch('/api/control-plane/apply', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify(signedPayload)
+      });
+
+      const body = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(body?.message || body?.error || 'Schema apply failed.');
+      }
+
+      setSubmission(body);
+      setRequestId(makeId('req'));
+    } catch (error) {
+      setSubmissionError(error?.message || 'Schema apply failed.');
+    } finally {
+      setIsApplying(false);
     }
   }
 
@@ -599,6 +804,14 @@ export default function HomePage() {
             <h2>2. Database Configuration</h2>
           </header>
           <div className="field-grid two-col">
+            <label>
+              Tenant ID
+              <input
+                value={tenantId}
+                onChange={(event) => setTenantId(event.target.value)}
+                placeholder="tenant_demo"
+              />
+            </label>
             <label>
               Database name
               <input
@@ -821,14 +1034,24 @@ export default function HomePage() {
         <section className="card full-width">
           <header className="section-row">
             <h2>6. Request Preview and Submit</h2>
-            <button
-              type="submit"
-              className="btn"
-              disabled={!canSubmit || isSubmitting}
-              title={canSubmit ? 'Submit payload' : 'Resolve validation errors first'}
-            >
-              {isSubmitting ? 'Submitting...' : 'Submit Payload'}
-            </button>
+            <div className="inline-row">
+              <button
+                type="submit"
+                className="btn"
+                disabled={!canSubmit || isSubmitting || isApplying}
+                title={canSubmit ? 'Submit payload' : 'Resolve validation errors first'}
+              >
+                {isSubmitting ? 'Signing + Submitting...' : 'Sign + Submit Payload'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-muted"
+                onClick={applyDraft}
+                disabled={!canSubmit || isSubmitting || isApplying}
+              >
+                {isApplying ? 'Signing + Applying...' : 'Sign + Apply Schema'}
+              </button>
+            </div>
           </header>
 
           {draft.issues.length > 0 ? (
