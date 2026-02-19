@@ -30,6 +30,8 @@
 - [x] EigenCompute deployment manifest (`deployment/eigencompute/agent-manifest.yaml`).
 - [x] Runtime attestation sample artifact (`deployment/eigencompute/runtime-attestation.sample.json`).
 - [x] Manifest render helper (`scripts/render-eigencompute-manifest.sh`).
+- [x] Runtime evidence collector (`scripts/collect-runtime-evidence.mjs`).
+- [x] Captured runtime evidence bundle (`submission/evidence/eigencompute/`).
 - [x] Known limitations and trust assumptions document.
 
 ## Pre-Submission Commands

@@ -263,6 +263,8 @@ Deployment artifacts:
 - `deployment/eigencompute/agent-manifest.yaml`
 - `deployment/eigencompute/runtime-attestation.sample.json`
 - `scripts/render-eigencompute-manifest.sh` (or `npm run eigen:manifest`)
+- `scripts/collect-runtime-evidence.mjs` (or `node scripts/collect-runtime-evidence.mjs <baseUrl>`)
+- `submission/evidence/eigencompute/` (captured runtime attestation snapshot + summary + rendered manifest)
 
 ## A2A interoperability (Task 8)
 
