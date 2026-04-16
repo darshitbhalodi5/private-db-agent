@@ -1,8 +1,8 @@
 import './globals.css';
 
 export const metadata = {
-  title: 'Eigen Private DB Agent Console',
-  description: 'Frontend control plane for dynamic policy-driven database management'
+  title: 'Eigen Data Router',
+  description: 'Policy-aware aggregation layer for private database agents and runtime-verified operations.'
 };
 
 export default function RootLayout({ children }) {
